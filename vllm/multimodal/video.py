@@ -736,8 +736,7 @@ class PyNvVideoCodecVideoBackendMixin:
         target: VideoTargetMetadata,
         **kwargs,
     ) -> tuple[npt.NDArray, VideoSourceMetadata, list[int], list[int]]:
-        import PyNvVideoCodec as nvc
-
+        from vllm.multimodal._pynvvideocodec_compat import PyNvVideoCodec as nvc
         from vllm.multimodal.gpu_ipc_memory import get_mm_gpu_ipc_pool
 
         temp_fd, temp_path = tempfile.mkstemp(suffix=".mp4")
