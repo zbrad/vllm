@@ -46,7 +46,7 @@ else()
           # This pinned commit's PYTHON_SUPPORTED_VERSIONS list predates
           # Python 3.14 support; add it so the version-check macro in
           # cmake/utils.cmake doesn't hard-fail on 3.14 interpreters.
-          PATCH_COMMAND sed -i "s/\"3.13\")/\"3.13\" \"3.14\")/" CMakeLists.txt
+          PATCH_COMMAND sed -i "s/\"3.13\")/\"3.13;3.14\")/" CMakeLists.txt
   )
 endif()
 
