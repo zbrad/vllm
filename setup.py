@@ -1066,6 +1066,14 @@ def get_requirements() -> list[str]:
 
     if _no_device():
         requirements = _read_requirements("common.txt")
+    elif _is_cuda() and os.environ.get("VLLM_GB10_BUILD"):
+        # GB10 (DGX Spark, aarch64, sm_121): torch/flashinfer come from
+        # requirements/gb10.txt's `@ URL` GitHub-Release wheel pins instead
+        # of cuda.txt's PyPI pins, since no official aarch64/sm_121 build of
+        # either exists upstream yet. flash-attention is intentionally not
+        # listed here -- see cmake/external_projects/vllm_flash_attn.cmake's
+        # VLLM_FLASH_ATTN_PREBUILT_PKG path.
+        requirements = _read_requirements("gb10.txt")
     elif _is_cuda():
         requirements = _read_requirements("cuda.txt")
         cuda_major, cuda_minor = torch.version.cuda.split(".")
@@ -1112,10 +1120,19 @@ if _is_hip():
 
 if _is_cuda():
     ext_modules.append(CMakeExtension(name="vllm.vllm_flash_attn._vllm_fa2_C"))
-    if USE_PRECOMPILED_EXTENSIONS or (
-        CUDA_HOME and get_nvcc_cuda_version() >= Version("12.3")
-    ):
-        # FA3 requires CUDA 12.3 or later
+    if (
+        USE_PRECOMPILED_EXTENSIONS
+        or (CUDA_HOME and get_nvcc_cuda_version() >= Version("12.3"))
+    ) and not os.environ.get("VLLM_GB10_BUILD"):
+        # FA3 requires CUDA 12.3 or later. This condition only checks CUDA
+        # toolkit version, not GPU architecture, because it assumes
+        # flash-attention's FetchContent build always produces a
+        # _vllm_fa3_C.abi3.so. GB10 (sm_121, non-Hopper) is exempted: its
+        # flash-attention build makes _vllm_fa3_C a genuine no-op CMake
+        # target with no .so at all (FA3 is Hopper-only), which this
+        # unconditional copy step doesn't expect -- and vLLM's own backend
+        # oracle already falls back to FLASHINFER cleanly when this .so is
+        # simply absent.
         ext_modules.append(CMakeExtension(name="vllm.vllm_flash_attn._vllm_fa3_C"))
     # FA4 CuteDSL - Python-only component for FA4's cute DSL support
     # Optional since this doesn't produce a .so file, just copies Python files

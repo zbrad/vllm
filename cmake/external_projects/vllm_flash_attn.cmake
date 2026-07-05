@@ -29,92 +29,180 @@ if (DEFINED ENV{VLLM_FLASH_ATTN_SRC_DIR})
   set(VLLM_FLASH_ATTN_SRC_DIR $ENV{VLLM_FLASH_ATTN_SRC_DIR})
 endif()
 
-if(VLLM_FLASH_ATTN_SRC_DIR)
-  FetchContent_Declare(
-          vllm-flash-attn SOURCE_DIR
-          ${VLLM_FLASH_ATTN_SRC_DIR}
-          BINARY_DIR ${CMAKE_BINARY_DIR}/vllm-flash-attn
-  )
-else()
-  FetchContent_Declare(
-          vllm-flash-attn
-          GIT_REPOSITORY https://github.com/vllm-project/flash-attention.git
-          GIT_TAG 2c839c33742309ec41e620bf837495ec9926c56e
-          GIT_PROGRESS TRUE
-          # Don't share the vllm-flash-attn build between build types
-          BINARY_DIR ${CMAKE_BINARY_DIR}/vllm-flash-attn
-          # This pinned commit's PYTHON_SUPPORTED_VERSIONS list predates
-          # Python 3.14 support; add it so the version-check macro in
-          # cmake/utils.cmake doesn't hard-fail on 3.14 interpreters.
-          PATCH_COMMAND sed -i "s/\"3.13\")/\"3.13;3.14\")/" CMakeLists.txt
-  )
+# If VLLM_FLASH_ATTN_PREBUILT_PKG is set, vllm-flash-attn is consumed as an
+# already pip-installed `vllm_flash_attn` package (e.g. a wheel from a
+# zbrad/flash-attention GitHub Release, pinned via requirements/gb10.txt)
+# instead of being compiled from source via FetchContent. This is a GB10-only
+# path: it never touches the FetchContent GIT_REPOSITORY/GIT_TAG below, so the
+# default (non-GB10) build is completely unaffected.
+if (DEFINED ENV{VLLM_FLASH_ATTN_PREBUILT_PKG})
+  set(VLLM_FLASH_ATTN_PREBUILT_PKG $ENV{VLLM_FLASH_ATTN_PREBUILT_PKG})
 endif()
 
-# Make sure vllm-flash-attn install rules are nested under vllm/
-# ALL_COMPONENTS ensures the save/modify/restore runs exactly once regardless
-# of how many components are being installed, avoiding double-append of /vllm/.
-install(CODE "set(CMAKE_INSTALL_LOCAL_ONLY FALSE)" ALL_COMPONENTS)
-install(CODE "set(OLD_CMAKE_INSTALL_PREFIX \"\${CMAKE_INSTALL_PREFIX}\")" ALL_COMPONENTS)
-install(CODE "set(CMAKE_INSTALL_PREFIX \"\${CMAKE_INSTALL_PREFIX}/vllm/\")" ALL_COMPONENTS)
+if(VLLM_FLASH_ATTN_PREBUILT_PKG)
+  # Locate the already pip-installed vllm_flash_attn package (compiled
+  # _vllm_fa2_C*.so + supporting python files) and the flash_attn package
+  # (needed for the FA4 CuteDSL `cute/` tree) instead of fetching/compiling.
+  execute_process(
+    COMMAND ${Python_EXECUTABLE} -c "import vllm_flash_attn, os; print(os.path.dirname(vllm_flash_attn.__file__))"
+    OUTPUT_VARIABLE VLLM_FLASH_ATTN_PKG_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE _vllm_fa_pkg_result
+  )
+  if(NOT _vllm_fa_pkg_result EQUAL 0)
+    message(FATAL_ERROR "VLLM_FLASH_ATTN_PREBUILT_PKG is set but the "
+      "vllm_flash_attn package is not importable -- install it first "
+      "(see requirements/gb10.txt).")
+  endif()
 
-# Fetch the vllm-flash-attn library
-FetchContent_MakeAvailable(vllm-flash-attn)
-message(STATUS "vllm-flash-attn is available at ${vllm-flash-attn_SOURCE_DIR}")
+  # Locate (not import) flash_attn: its __init__.py imports flash_attn_2_cuda,
+  # a *different* compiled extension (the standalone flash-attn package's
+  # own) that our vllm_flash_attn wheel never builds -- only find_spec its
+  # location on disk to reach the cute/ subdirectory, without executing it.
+  execute_process(
+    COMMAND ${Python_EXECUTABLE} -c "import importlib.util, os; spec = importlib.util.find_spec('flash_attn'); print(os.path.dirname(spec.origin))"
+    OUTPUT_VARIABLE FLASH_ATTN_PKG_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE _flash_attn_pkg_result
+  )
+  if(NOT _flash_attn_pkg_result EQUAL 0)
+    message(FATAL_ERROR "VLLM_FLASH_ATTN_PREBUILT_PKG is set but the "
+      "flash_attn package (needed for the FA4 cute/ tree) is not importable.")
+  endif()
 
-# Restore the install prefix after FA's install rules
-install(CODE "set(CMAKE_INSTALL_PREFIX \"\${OLD_CMAKE_INSTALL_PREFIX}\")" ALL_COMPONENTS)
-install(CODE "set(CMAKE_INSTALL_LOCAL_ONLY TRUE)" ALL_COMPONENTS)
+  message(STATUS "vllm-flash-attn: using prebuilt package at ${VLLM_FLASH_ATTN_PKG_DIR}")
 
-# Install shared Python files for both FA2 and FA3 components
-foreach(_FA_COMPONENT _vllm_fa2_C _vllm_fa3_C)
-  # Ensure the vllm/vllm_flash_attn directory exists before installation
+  # No compilation happens in this branch -- these are no-op targets, matching
+  # the no-op-target pattern flash-attention's own CMakeLists uses when an
+  # arch family (e.g. FA3 on non-Hopper) isn't being built.
+  add_custom_target(_vllm_fa2_C)
+  add_custom_target(_vllm_fa3_C)
+
   install(CODE "file(MAKE_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn\")"
-    COMPONENT ${_FA_COMPONENT})
+    COMPONENT _vllm_fa2_C)
 
-  # Copy vllm_flash_attn python files (except __init__.py and flash_attn_interface.py
-  # which are source-controlled in vllm)
+  # Copy the compiled extension + supporting python files (except the
+  # top-level __init__.py and flash_attn_interface.py, which are
+  # source-controlled in vllm). Unlike the FetchContent path below -- where
+  # a plain `PATTERN "__init__.py" EXCLUDE` is safe because flash-attention's
+  # own install rules already populate nested __init__.py files (layers/,
+  # ops/, ops/triton/) and this loop only supplements that -- this branch is
+  # the *sole* copy mechanism, and PATTERN/REGEX match against the full
+  # source path, so an unanchored exclusion would strip every nested
+  # __init__.py too (verified empirically). Anchor to the package root only.
   install(
-    DIRECTORY ${vllm-flash-attn_SOURCE_DIR}/vllm_flash_attn/
+    DIRECTORY ${VLLM_FLASH_ATTN_PKG_DIR}/
     DESTINATION vllm/vllm_flash_attn
-    COMPONENT ${_FA_COMPONENT}
-    FILES_MATCHING PATTERN "*.py"
-    PATTERN "__init__.py" EXCLUDE
-    PATTERN "flash_attn_interface.py" EXCLUDE
+    COMPONENT _vllm_fa2_C
+    FILES_MATCHING
+    PATTERN "*.py"
+    PATTERN "*.so"
+    REGEX "/vllm_flash_attn/__init__\\.py$" EXCLUDE
+    REGEX "/vllm_flash_attn/flash_attn_interface\\.py$" EXCLUDE
   )
 
-endforeach()
-
-#
-# FA4 CuteDSL component
-# This is a Python-only component that copies the flash_attn/cute directory
-# and transforms imports to match our package structure.
-#
-add_custom_target(_vllm_fa4_cutedsl_C)
-
-# Install flash_attn/cute directory (needed for FA4).
-# When using a local source dir (VLLM_FLASH_ATTN_SRC_DIR), create a symlink
-# so edits to cute-dsl Python files take effect immediately without rebuilding.
-# Otherwise, copy files and transform flash_attn.cute imports to
-# vllm.vllm_flash_attn.cute to match our package structure.
-if(VLLM_FLASH_ATTN_SRC_DIR)
+  # FA4 CuteDSL: symlink vllm/vllm_flash_attn/cute at the installed
+  # flash_attn package's cute/ dir. vllm/vllm_flash_attn/__init__.py already
+  # detects symlink mode and registers a virtual `flash_attn` module so the
+  # unrewritten `flash_attn.cute.*` imports inside these files resolve --
+  # the same mechanism the VLLM_FLASH_ATTN_SRC_DIR local-dev path below uses.
+  add_custom_target(_vllm_fa4_cutedsl_C)
   install(CODE "
-    set(LINK_TARGET \"${vllm-flash-attn_SOURCE_DIR}/flash_attn/cute\")
+    set(LINK_TARGET \"${FLASH_ATTN_PKG_DIR}/cute\")
     set(LINK_NAME \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn/cute\")
     file(MAKE_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn\")
     file(REMOVE_RECURSE \"\${LINK_NAME}\")
     file(CREATE_LINK \"\${LINK_TARGET}\" \"\${LINK_NAME}\" SYMBOLIC)
   " COMPONENT _vllm_fa4_cutedsl_C)
+
 else()
-  install(CODE "
-    file(GLOB_RECURSE CUTE_PY_FILES \"${vllm-flash-attn_SOURCE_DIR}/flash_attn/cute/*.py\")
-    foreach(SRC_FILE \${CUTE_PY_FILES})
-      file(RELATIVE_PATH REL_PATH \"${vllm-flash-attn_SOURCE_DIR}/flash_attn/cute\" \${SRC_FILE})
-      set(DST_FILE \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn/cute/\${REL_PATH}\")
-      get_filename_component(DST_DIR \${DST_FILE} DIRECTORY)
-      file(MAKE_DIRECTORY \${DST_DIR})
-      file(READ \${SRC_FILE} FILE_CONTENTS)
-      string(REPLACE \"flash_attn.cute\" \"vllm.vllm_flash_attn.cute\" FILE_CONTENTS \"\${FILE_CONTENTS}\")
-      file(WRITE \${DST_FILE} \"\${FILE_CONTENTS}\")
-    endforeach()
-  " COMPONENT _vllm_fa4_cutedsl_C)
+  if(VLLM_FLASH_ATTN_SRC_DIR)
+    FetchContent_Declare(
+            vllm-flash-attn SOURCE_DIR
+            ${VLLM_FLASH_ATTN_SRC_DIR}
+            BINARY_DIR ${CMAKE_BINARY_DIR}/vllm-flash-attn
+    )
+  else()
+    FetchContent_Declare(
+            vllm-flash-attn
+            GIT_REPOSITORY https://github.com/vllm-project/flash-attention.git
+            GIT_TAG 2c839c33742309ec41e620bf837495ec9926c56e
+            GIT_PROGRESS TRUE
+            # Don't share the vllm-flash-attn build between build types
+            BINARY_DIR ${CMAKE_BINARY_DIR}/vllm-flash-attn
+            # This pinned commit's PYTHON_SUPPORTED_VERSIONS list predates
+            # Python 3.14 support; add it so the version-check macro in
+            # cmake/utils.cmake doesn't hard-fail on 3.14 interpreters.
+            PATCH_COMMAND sed -i "s/\"3.13\")/\"3.13;3.14\")/" CMakeLists.txt
+    )
+  endif()
+
+  # Make sure vllm-flash-attn install rules are nested under vllm/
+  # ALL_COMPONENTS ensures the save/modify/restore runs exactly once regardless
+  # of how many components are being installed, avoiding double-append of /vllm/.
+  install(CODE "set(CMAKE_INSTALL_LOCAL_ONLY FALSE)" ALL_COMPONENTS)
+  install(CODE "set(OLD_CMAKE_INSTALL_PREFIX \"\${CMAKE_INSTALL_PREFIX}\")" ALL_COMPONENTS)
+  install(CODE "set(CMAKE_INSTALL_PREFIX \"\${CMAKE_INSTALL_PREFIX}/vllm/\")" ALL_COMPONENTS)
+
+  # Fetch the vllm-flash-attn library
+  FetchContent_MakeAvailable(vllm-flash-attn)
+  message(STATUS "vllm-flash-attn is available at ${vllm-flash-attn_SOURCE_DIR}")
+
+  # Restore the install prefix after FA's install rules
+  install(CODE "set(CMAKE_INSTALL_PREFIX \"\${OLD_CMAKE_INSTALL_PREFIX}\")" ALL_COMPONENTS)
+  install(CODE "set(CMAKE_INSTALL_LOCAL_ONLY TRUE)" ALL_COMPONENTS)
+
+  # Install shared Python files for both FA2 and FA3 components
+  foreach(_FA_COMPONENT _vllm_fa2_C _vllm_fa3_C)
+    # Ensure the vllm/vllm_flash_attn directory exists before installation
+    install(CODE "file(MAKE_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn\")"
+      COMPONENT ${_FA_COMPONENT})
+
+    # Copy vllm_flash_attn python files (except __init__.py and flash_attn_interface.py
+    # which are source-controlled in vllm)
+    install(
+      DIRECTORY ${vllm-flash-attn_SOURCE_DIR}/vllm_flash_attn/
+      DESTINATION vllm/vllm_flash_attn
+      COMPONENT ${_FA_COMPONENT}
+      FILES_MATCHING PATTERN "*.py"
+      PATTERN "__init__.py" EXCLUDE
+      PATTERN "flash_attn_interface.py" EXCLUDE
+    )
+
+  endforeach()
+
+  #
+  # FA4 CuteDSL component
+  # This is a Python-only component that copies the flash_attn/cute directory
+  # and transforms imports to match our package structure.
+  #
+  add_custom_target(_vllm_fa4_cutedsl_C)
+
+  # Install flash_attn/cute directory (needed for FA4).
+  # When using a local source dir (VLLM_FLASH_ATTN_SRC_DIR), create a symlink
+  # so edits to cute-dsl Python files take effect immediately without rebuilding.
+  # Otherwise, copy files and transform flash_attn.cute imports to
+  # vllm.vllm_flash_attn.cute to match our package structure.
+  if(VLLM_FLASH_ATTN_SRC_DIR)
+    install(CODE "
+      set(LINK_TARGET \"${vllm-flash-attn_SOURCE_DIR}/flash_attn/cute\")
+      set(LINK_NAME \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn/cute\")
+      file(MAKE_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn\")
+      file(REMOVE_RECURSE \"\${LINK_NAME}\")
+      file(CREATE_LINK \"\${LINK_TARGET}\" \"\${LINK_NAME}\" SYMBOLIC)
+    " COMPONENT _vllm_fa4_cutedsl_C)
+  else()
+    install(CODE "
+      file(GLOB_RECURSE CUTE_PY_FILES \"${vllm-flash-attn_SOURCE_DIR}/flash_attn/cute/*.py\")
+      foreach(SRC_FILE \${CUTE_PY_FILES})
+        file(RELATIVE_PATH REL_PATH \"${vllm-flash-attn_SOURCE_DIR}/flash_attn/cute\" \${SRC_FILE})
+        set(DST_FILE \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn/cute/\${REL_PATH}\")
+        get_filename_component(DST_DIR \${DST_FILE} DIRECTORY)
+        file(MAKE_DIRECTORY \${DST_DIR})
+        file(READ \${SRC_FILE} FILE_CONTENTS)
+        string(REPLACE \"flash_attn.cute\" \"vllm.vllm_flash_attn.cute\" FILE_CONTENTS \"\${FILE_CONTENTS}\")
+        file(WRITE \${DST_FILE} \"\${FILE_CONTENTS}\")
+      endforeach()
+    " COMPONENT _vllm_fa4_cutedsl_C)
+  endif()
 endif()

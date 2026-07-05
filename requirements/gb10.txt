@@ -1,0 +1,51 @@
+# GB10 (DGX Spark, aarch64, compute capability 12.1) build.
+# Replaces requirements/cuda.txt's torch/flashinfer pins with real wheel
+# dependencies from personal GitHub Releases, since no official aarch64/sm_121
+# wheels exist upstream yet. Modeled on requirements/xpu.txt's own
+# `@ URL` GitHub-Release-wheel pattern (vllm_xpu_kernels).
+#
+# flash-attention is NOT listed here -- it's consumed via CMake at build time
+# (see cmake/external_projects/vllm_flash_attn.cmake, VLLM_FLASH_ATTN_PREBUILT_PKG
+# path) rather than as a normal pip dependency, since vLLM's own
+# vllm.vllm_flash_attn package nests the compiled extension as a sibling file
+# via a relative import (`from . import _vllm_fa2_C`) that a top-level pip
+# package can't satisfy directly. build_gb10.sh installs it explicitly before
+# the vLLM build so the CMake step can find it via `import vllm_flash_attn`.
+
+# Common dependencies
+-r common.txt
+
+numba == 0.65.0 # Required for N-gram speculative decoding
+
+torch @ https://github.com/zbrad/pytorch/releases/download/v2.14.0.dev20260703-gb10-cu133/torch-2.14.0.dev20260703+git9dcbe34504.gb10.cu133-cp314-cp314-linux_aarch64.whl
+# No aarch64/gb10 torchaudio or torchvision build exists yet (unlike
+# flash-attention/flashinfer, these haven't been forked/built for GB10) --
+# omitted rather than pinned to versions that won't match this torch build.
+# PyNvVideoCodec==2.1.0; python_version < "3.13"
+# PyNvVideoCodec>=2.0.4; python_version >= "3.13"
+
+# FlashInfer should be updated together with the Dockerfile
+# TODO: zbrad/flashinfer's gb10-only branch has no GitHub Release yet (local
+# wheel only: flashinfer_python-0.6.13+gb10-py3-none-any.whl). Publishing that
+# release is a separate follow-up (flashinfer's own release process, not part
+# of this vLLM change) -- until then, keep the upstream PyPI pins so this file
+# is installable. Swap to an `@ URL` pin once that release exists.
+flashinfer-python==0.6.13
+flashinfer-cubin==0.6.13
+apache-tvm-ffi==0.1.9
+tilelang==0.1.9
+nvidia-cudnn-frontend>=1.19.1
+# Required for LLM_NVTX_SCOPES_FOR_PROFILING=1
+nvtx==0.2.15
+# Required for faster safetensors model loading
+fastsafetensors >= 0.3.2
+
+# QuACK and Cutlass DSL for FA4 (cute-DSL implementation)
+nvidia-cutlass-dsl[cu13]==4.5.2
+quack-kernels>=0.3.3
+
+# Tokenspeed_MLA for faster mla with spec decode
+tokenspeed-mla==0.1.2
+
+# Humming kernels for quantization gemm
+humming-kernels[cu13]==0.1.6

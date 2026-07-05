@@ -44,9 +44,18 @@ logger = init_logger(__name__)
 
 
 def kernel_warmup(worker: "Worker"):
-    from vllm.model_executor.warmup.minimax_m3_msa_warmup import (
-        minimax_m3_msa_warmup,
-    )
+    try:
+        from vllm.model_executor.warmup.minimax_m3_msa_warmup import (
+            minimax_m3_msa_warmup,
+        )
+    except ImportError:
+        # minimax_m3's model/processor code eagerly imports torchvision even
+        # though this warmup is a no-op for any non-MiniMax-M3 model (gated
+        # inside, same pattern as deepseek_v4_mhc_warmup below) -- don't let
+        # a missing optional dependency (torchvision) break warmup for every
+        # other model.
+        def minimax_m3_msa_warmup(worker: "Worker") -> None:
+            return None
 
     # Pooling models do not use the generation slot-mapping path.
     if not worker.use_v2_model_runner and not worker.model_runner.is_pooling_model:
