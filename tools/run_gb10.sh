@@ -18,7 +18,14 @@ set -euo pipefail
 # DeepSeek-V4-Flash; see requirements/gb10.txt) -- FLASHINFER_DISABLE_JIT=1
 # turns any op outside that filtered set into a hard MissingJITCacheError
 # instead of a silent (working, just slower on first call) JIT compile.
-# Override with FLASHINFER_DISABLE_JIT=0 when running other models.
-export FLASHINFER_DISABLE_JIT="${FLASHINFER_DISABLE_JIT:-1}"
+#
+# flashinfer checks `os.environ.get("FLASHINFER_DISABLE_JIT")` truthily
+# (flashinfer/jit/core.py) -- FLASHINFER_DISABLE_JIT=0 is still a non-empty
+# string and stays "disabled". `${VAR-default}` (no colon) substitutes only
+# when VAR is completely unset, unlike `${VAR:-default}` which also
+# substitutes for an empty string -- so to actually allow JIT for other
+# models, set it to *empty* rather than unsetting it or using 0, e.g.:
+#   FLASHINFER_DISABLE_JIT= tools/run_gb10.sh serve ...
+export FLASHINFER_DISABLE_JIT="${FLASHINFER_DISABLE_JIT-1}"
 
 exec vllm "$@"
