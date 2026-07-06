@@ -34,24 +34,38 @@ fi
 # shapes (head_dim/qk_rope_head_dim) with the real target models, not the
 # target models themselves.
 #
-# NemotronH: runs with vLLM's default Triton Mamba SSU kernel (mamba_backend
-# left unset below), NOT flashinfer's AOT-cached SSU op (the int32
-# stateIndex_dtype fix added to the gb10 flashinfer release) -- this proves
-# NemotronH runs correctly on the GB10 stack (flash-attn attention,
-# flashinfer sampling, Triton mamba), not that flashinfer's SSU path works.
-# Forcing mamba_backend="flashinfer" was tried and does NOT work for this
-# model even with JIT allowed: Nemotron-3-Nano-4B-BF16's mamba_head_dim=80
-# fails a compile-time static_assert in flashinfer's own CUDA source
-# ("DIM must be divisible by TMA_STATE_ROWS") -- a fundamental kernel
-# limitation for this head dim, not an AOT-cache gap. The one Nemotron-3
-# variant confirmed to share Nemotron-3-Super-120B's mamba_head_dim=64
-# (Nemotron-3-Nano-30B-A3B-BF16) is 63GB and BF16-unquantized, while the AOT
-# MoE build is scoped to fp4/fp8, so it would likely still miss the AOT
-# cache on its MoE op after a 63GB download. Net: no small model can
-# validate flashinfer's Mamba SSU path on this hardware; that's inherently
-# a real-target-model-scale test.
+# NemotronH (dense stand-in): runs with vLLM's default Triton Mamba SSU
+# kernel (mamba_backend left unset below), NOT flashinfer's AOT-cached SSU
+# op -- proves NemotronH runs correctly on the GB10 stack (flash-attn
+# attention, flashinfer sampling, Triton mamba), not that flashinfer's SSU
+# path works. Forcing mamba_backend="flashinfer" does NOT work for this
+# specific model even with JIT allowed: Nemotron-3-Nano-4B-BF16's
+# mamba_head_dim=80 fails a compile-time static_assert in flashinfer's own
+# CUDA source ("DIM must be divisible by TMA_STATE_ROWS") -- a fundamental
+# kernel limitation for that head dim, not an AOT-cache gap.
+#
+# NemotronH (NVFP4 MoE stand-in): nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
+# closes the gap the above paragraph used to describe as untestable. It
+# shares Nemotron-3-Super-120B's mamba_head_dim=64 (confirmed via
+# config.json) AND has real NVFP4-quantized routed MoE experts (confirmed
+# via hf_quant_config.json, modelopt v0.29.0, group size 16) at a
+# manageable 19GB/5-shard download -- unlike Nemotron-3-Nano-30B-A3B-BF16
+# (right head_dim, but 63GB and unquantized) or Nano-4B (quantized-shape
+# irrelevant since it's dense BF16, and wrong head_dim besides). Run here
+# with mamba_backend="flashinfer" explicitly (independent of this script's
+# global FLASHINFER_DISABLE_JIT setting -- see header comment): confirmed
+# 2026-07-06 under FLASHINFER_DISABLE_JIT=1 (strict no-JIT) that
+# `ssu_dispatch.py` selects "Using flashinfer Mamba SSU backend." and
+# generates correctly, with no MissingJITCacheError -- i.e. flashinfer's
+# AOT SSU cache genuinely covers mamba_head_dim=64, and NVFP4 MoE expert
+# weight loading (the routed_experts.py copy_ fix from 989b7a835) works
+# outside the DeepSeek-V4 codepath it was originally verified against.
+# This does not substitute for testing the real Super-120B checkpoint
+# (different scale entirely), but is the strongest available evidence
+# short of that checkpoint that the combination works on this stack.
 MODELS=(
   "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16::::NemotronH (dense, stand-in for Nemotron-3-Super-120B)"
+  "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4::flashinfer::NemotronH (NVFP4 MoE, mamba_head_dim=64, stand-in for Nemotron-3-Super-120B's AOT-scoped MoE+SSU path)"
   "yujiepan/deepseek-v4-tiny-random:fp8_ds_mla::deepgemm-sm121:DeepSeek-V4 MLA (tiny-random, stand-in for DeepSeek-V4-Flash)"
   "silence09/DeepSeek-V4-Pro-Tiny:fp8_ds_mla::bad-checkpoint:DeepSeek-V4 MLA (Pro-Tiny, second stand-in for cross-check)"
 )
