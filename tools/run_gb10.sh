@@ -9,13 +9,16 @@
 
 set -euo pipefail
 
-# flashinfer.jit.env's _get_cubin_dir() does a strict string-equality check
-# between flashinfer-python's version (0.6.13+gb10, our custom local build)
-# and flashinfer-cubin's version (stock 0.6.13 from PyPI, since
-# zbrad/flashinfer's gb10-only branch has no GitHub Release yet -- see
-# requirements/gb10.txt) and raises RuntimeError on any mismatch, even
-# though the two are actually compatible here. Drop this once that release
-# exists and both versions are made to match.
-export FLASHINFER_DISABLE_VERSION_CHECK=1
+# flashinfer-jit-cache (the AOT-compiled GB10 kernel cache, see
+# requirements/gb10.txt) is now published at the same +gb10 version as
+# flashinfer-python, so flashinfer.jit.env's version-equality check passes
+# on its own -- FLASHINFER_DISABLE_VERSION_CHECK is no longer needed.
+#
+# That jit-cache release is scoped to two target models (NemotronH,
+# DeepSeek-V4-Flash; see requirements/gb10.txt) -- FLASHINFER_DISABLE_JIT=1
+# turns any op outside that filtered set into a hard MissingJITCacheError
+# instead of a silent (working, just slower on first call) JIT compile.
+# Override with FLASHINFER_DISABLE_JIT=0 when running other models.
+export FLASHINFER_DISABLE_JIT="${FLASHINFER_DISABLE_JIT:-1}"
 
 exec vllm "$@"

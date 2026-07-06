@@ -25,13 +25,18 @@ torch @ https://github.com/zbrad/pytorch/releases/download/v2.14.0.dev20260703-g
 # PyNvVideoCodec>=2.0.4; python_version >= "3.13"
 
 # FlashInfer should be updated together with the Dockerfile
-# TODO: zbrad/flashinfer's gb10-only branch has no GitHub Release yet (local
-# wheel only: flashinfer_python-0.6.13+gb10-py3-none-any.whl). Publishing that
-# release is a separate follow-up (flashinfer's own release process, not part
-# of this vLLM change) -- until then, keep the upstream PyPI pins so this file
-# is installable. Swap to an `@ URL` pin once that release exists.
-flashinfer-python==0.6.13
-flashinfer-cubin==0.6.13
+# zbrad/flashinfer's gb10-only branch, scoped to two target models
+# (NemotronH, DeepSeek-V4-Flash) -- see that release's notes for the exact
+# filtered op set. flashinfer-jit-cache (NOT flashinfer-cubin -- a
+# different, AOT-compiled-kernel packaging mechanism that this fork uses
+# instead) supplies the actual GB10 binary; flashinfer-python alone has no
+# compiled extension. Both wheels share the same +gb10 version, so the
+# FLASHINFER_DISABLE_VERSION_CHECK workaround this file previously needed
+# is no longer required. tools/run_gb10.sh sets FLASHINFER_DISABLE_JIT=1 at
+# runtime by default, to get a hard fail instead of a silent JIT compile for
+# any op outside the filtered set.
+flashinfer-python @ https://github.com/zbrad/flashinfer/releases/download/v0.6.13-gb10/flashinfer_python-0.6.13+gb10-py3-none-any.whl
+flashinfer-jit-cache @ https://github.com/zbrad/flashinfer/releases/download/v0.6.13-gb10/flashinfer_jit_cache-0.6.13+gb10-cp39-abi3-manylinux_2_28_aarch64.whl
 apache-tvm-ffi==0.1.9
 tilelang==0.1.9
 nvidia-cudnn-frontend>=1.19.1
