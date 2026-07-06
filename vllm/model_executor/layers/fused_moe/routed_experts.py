@@ -33,6 +33,37 @@ if TYPE_CHECKING:
 logger = init_logger(__name__)
 
 
+# Native packed sub-byte dtypes with no general cross-dtype copy_/cast
+# support in torch (they only support same-dtype identity copy_, or lack
+# even that -- e.g. fill_). Genuinely different floating-point dtypes of
+# the same width (e.g. float8_e4m3fn <- float8_e5m2) DO support a real
+# numeric cast via copy_, so this set must stay narrow: it's an allowlist
+# of dtypes known to need the uint8-reinterpret workaround, not a generic
+# "same element size" heuristic that would also swallow those valid casts.
+_PACKED_SUBBYTE_DTYPES = frozenset({torch.float4_e2m1fn_x2, torch.int4, torch.uint4})
+
+
+def _copy_quantized_weight(dst: torch.Tensor, src: torch.Tensor) -> None:
+    """Copy ``src`` into ``dst``, working around torch's lack of a
+    cross-dtype ``copy_`` for native packed sub-byte quantization dtypes
+    (e.g. ``Float4_e2m1fn_x2``, used by DeepSeek-V4's fp4 experts).
+
+    When exactly one side is such a dtype and the other is same-width
+    ``uint8`` (the usual checkpoint/parameter dtype mismatch for these
+    formats), reinterpret both as ``uint8`` before copying -- the same
+    pattern already used in ``fused_moe/oracle/mxfp4.py``. Any other dtype
+    mismatch falls through to a plain ``copy_``, which performs a real cast.
+    """
+    if (
+        dst.dtype != src.dtype
+        and (dst.dtype in _PACKED_SUBBYTE_DTYPES or src.dtype in _PACKED_SUBBYTE_DTYPES)
+        and dst.element_size() == src.element_size()
+    ):
+        dst.view(torch.uint8).copy_(src.view(torch.uint8))
+    else:
+        dst.copy_(src)
+
+
 class FusedMoeWeightScaleSupported(Enum):
     TENSOR = "tensor"
     CHANNEL = "channel"
@@ -494,7 +525,7 @@ class RoutedExperts(PluggableLayer):
             hidden_dim=hidden_dim,
             shard_dim=shard_dim,
         )
-        expert_data.copy_(loaded_weight)
+        _copy_quantized_weight(expert_data, loaded_weight)
 
     def _load_w2(
         self,
@@ -529,7 +560,7 @@ class RoutedExperts(PluggableLayer):
             hidden_dim=hidden_dim,
             shard_dim=shard_dim,
         )
-        expert_data.copy_(loaded_weight)
+        _copy_quantized_weight(expert_data, loaded_weight)
 
     def _load_single_value(
         self, param: torch.nn.Parameter, loaded_weight: torch.Tensor, expert_id: int
