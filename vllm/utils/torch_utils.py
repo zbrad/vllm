@@ -871,7 +871,12 @@ HAS_OPAQUE_TYPE = is_torch_equal_or_newer("2.11.0.dev")
 _USE_LAYERNAME = HAS_OPAQUE_TYPE and envs.VLLM_USE_LAYERNAME
 
 if HAS_OPAQUE_TYPE:
-    from torch._opaque_base import OpaqueBase
+    try:
+        # torch renamed this module; torch._opaque_base still exists as a
+        # deprecated shim on newer torch, but emits a warning on import.
+        from torch._custom_class_base import CustomClassBase as OpaqueBase
+    except ImportError:
+        from torch._opaque_base import OpaqueBase
 else:
     OpaqueBase = object  # type: ignore[misc, assignment]
 
@@ -899,9 +904,17 @@ class LayerName(OpaqueBase):  # type: ignore[misc]
 
 
 if HAS_OPAQUE_TYPE:
-    from torch._library.opaque_object import register_opaque_type
+    try:
+        # register_opaque_type/typ="value" are the deprecated names on newer
+        # torch (renamed to register_custom_class/typ="constant"); old shims
+        # still work but emit a warning on every call.
+        from torch._library.opaque_object import register_custom_class
 
-    register_opaque_type(LayerName, typ="value", hoist=True)
+        register_custom_class(LayerName, typ="constant", hoist=True)
+    except ImportError:
+        from torch._library.opaque_object import register_opaque_type
+
+        register_opaque_type(LayerName, typ="value", hoist=True)
 
 # On torch >= 2.11 (with VLLM_USE_LAYERNAME enabled), custom op
 # layer_name parameters use LayerName; otherwise they remain plain str.
