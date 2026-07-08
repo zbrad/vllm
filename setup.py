@@ -1019,12 +1019,27 @@ def get_vllm_version() -> str:
         if USE_PRECOMPILED_EXTENSIONS and not envs.VLLM_SKIP_PRECOMPILED_VERSION_SUFFIX:
             version += f"{sep}precompiled"
         else:
+            # Self-document GB10 native (non-JIT, single-arch) builds in the
+            # version string -- pip show/pip freeze otherwise can't
+            # distinguish this from a stock vllm install by name, since the
+            # package/import name is unconditionally "vllm". Computed before
+            # the cuda-version-suffix check below so the "gb10" marker isn't
+            # silently dropped on hosts where nvcc's version happens to match
+            # VLLM_MAIN_CUDA_VERSION exactly.
+            gb10_build = bool(os.environ.get("VLLM_GB10_BUILD"))
             cuda_version = str(get_nvcc_cuda_version())
             if cuda_version != envs.VLLM_MAIN_CUDA_VERSION:
                 cuda_version_str = cuda_version.replace(".", "")[:3]
                 # skip this for source tarball, required for pypi
                 if "sdist" not in sys.argv:
-                    version += f"{sep}cu{cuda_version_str}"
+                    tag = (
+                        f"gb10.cu{cuda_version_str}"
+                        if gb10_build
+                        else f"cu{cuda_version_str}"
+                    )
+                    version += f"{sep}{tag}"
+            elif gb10_build and "sdist" not in sys.argv:
+                version += f"{sep}gb10"
     elif _is_hip():
         # Get the Rocm Version
         rocm_version = get_rocm_version() or torch.version.hip
