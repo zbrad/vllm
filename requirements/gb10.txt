@@ -25,9 +25,9 @@ torch @ https://github.com/zbrad/pytorch/releases/download/v2.14.0.dev20260703-g
 # PyNvVideoCodec>=2.0.4; python_version >= "3.13"
 
 # FlashInfer should be updated together with the Dockerfile
-# zbrad/flashinfer's gb10-only branch, scoped to two target models
-# (NemotronH, DeepSeek-V4-Flash) -- see that release's notes for the exact
-# filtered op set. flashinfer-jit-cache (NOT flashinfer-cubin -- a
+# zbrad/flashinfer's native-builds branch (renamed from gb10-only), scoped
+# to two target models (NemotronH, DeepSeek-V4-Flash) -- see that release's
+# notes for the exact filtered op set. flashinfer-jit-cache (NOT flashinfer-cubin -- a
 # different, AOT-compiled-kernel packaging mechanism that this fork uses
 # instead) supplies the actual GB10 binary; flashinfer-python alone has no
 # compiled extension. Both wheels share the same +gb10 version, so the
