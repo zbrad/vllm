@@ -11,11 +11,11 @@
 # "the AOT cache covers these ops" -- investigation found strict no-JIT
 # coverage is not achievable with small stand-ins for either family (see
 # per-model notes below), so JIT is left enabled (FLASHINFER_DISABLE_JIT
-# unset) here by default. tools/run_gb10.sh (which sets it to 1) is what
+# unset) here by default. tuned/run_gb10.sh (which sets it to 1) is what
 # enforces the stronger, AOT-only guarantee for the real target-shaped
 # models. To test under strict no-JIT instead, run with
 # FLASHINFER_DISABLE_JIT=1 set (flashinfer checks this env var truthily, so
-# only "set or unset" matters, not "0" vs "1" -- see tools/run_gb10.sh).
+# only "set or unset" matters, not "0" vs "1" -- see tuned/run_gb10.sh).
 
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

@@ -9,7 +9,7 @@
 # path) rather than as a normal pip dependency, since vLLM's own
 # vllm.vllm_flash_attn package nests the compiled extension as a sibling file
 # via a relative import (`from . import _vllm_fa2_C`) that a top-level pip
-# package can't satisfy directly. build_gb10.sh installs it explicitly before
+# package can't satisfy directly. tuned/build.sh gb10 installs it explicitly before
 # the vLLM build so the CMake step can find it via `import vllm_flash_attn`.
 
 # Common dependencies
@@ -32,7 +32,7 @@ torch @ https://github.com/zbrad/pytorch/releases/download/v2.14.0.dev20260703-g
 # instead) supplies the actual GB10 binary; flashinfer-python alone has no
 # compiled extension. Both wheels share the same +gb10 version, so the
 # FLASHINFER_DISABLE_VERSION_CHECK workaround this file previously needed
-# is no longer required. tools/run_gb10.sh sets FLASHINFER_DISABLE_JIT=1 at
+# is no longer required. tuned/run_gb10.sh sets FLASHINFER_DISABLE_JIT=1 at
 # runtime by default, to get a hard fail instead of a silent JIT compile for
 # any op outside the filtered set.
 flashinfer-python @ https://github.com/zbrad/flashinfer/releases/download/v0.6.13-gb10/flashinfer_python-0.6.13+gb10-py3-none-any.whl

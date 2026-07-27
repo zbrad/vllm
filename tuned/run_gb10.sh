@@ -4,8 +4,8 @@
 # Run vllm on the DGX Spark (NVIDIA GB10, sm_121) with the runtime env vars
 # a gb10 build needs. Pass through whatever vllm subcommand/args you want,
 # e.g.:
-#   tools/run_gb10.sh serve Qwen/Qwen3-Coder-30B-A3B-Instruct
-# See tools/build_gb10.sh for the matching build step.
+#   tuned/run_gb10.sh serve Qwen/Qwen3-Coder-30B-A3B-Instruct
+# See tuned/build.sh gb10 for the matching build step.
 
 set -euo pipefail
 
@@ -25,7 +25,7 @@ set -euo pipefail
 # when VAR is completely unset, unlike `${VAR:-default}` which also
 # substitutes for an empty string -- so to actually allow JIT for other
 # models, set it to *empty* rather than unsetting it or using 0, e.g.:
-#   FLASHINFER_DISABLE_JIT= tools/run_gb10.sh serve ...
+#   FLASHINFER_DISABLE_JIT= tuned/run_gb10.sh serve ...
 export FLASHINFER_DISABLE_JIT="${FLASHINFER_DISABLE_JIT-1}"
 
 exec vllm "$@"
