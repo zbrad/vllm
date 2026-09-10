@@ -60,11 +60,8 @@ echo "  Wheel   : ${WHEEL_BASENAME}"
 echo "  Version : ${FULL_VERSION}"
 echo ""
 echo "Publishing to GitHub release ${RELEASE_TAG}..."
-gh release create "${RELEASE_TAG}" \
-    --repo zbrad/vllm \
-    --title "${RELEASE_TITLE}" \
-    --target "tuned-builds" \
-    --notes "vllm ${FULL_VERSION} wheel for ${GPU_TUNED_HW_LABEL}, single-arch (TORCH_CUDA_ARCH_LIST=${GPU_TUNED_TORCH_ARCH}). Depends on zbrad/pytorch's and zbrad/flash-attention's matching gb10 releases (see requirements/gb10.txt and tuned/devices/${GPU_TUNED_VARIANT}.conf)." \
+gpu_tuned_publish_release "zbrad/vllm" "${RELEASE_TAG}" "${RELEASE_TITLE}" \
+    "vllm ${FULL_VERSION} wheel for ${GPU_TUNED_HW_LABEL}, single-arch (TORCH_CUDA_ARCH_LIST=${GPU_TUNED_TORCH_ARCH}). Depends on zbrad/pytorch's and zbrad/flash-attention's matching gb10 releases (see requirements/gb10.txt and tuned/devices/${GPU_TUNED_VARIANT}.conf)." \
     "${WHEEL_FILE}#${WHEEL_BASENAME}"
 
 echo ""
