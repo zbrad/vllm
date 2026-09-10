@@ -30,6 +30,8 @@ cd "$REPO_ROOT"
 GPU_TUNED_SELF_DIR="${REPO_ROOT}/tuned"
 # shellcheck source=devices/rtx50.conf
 source "${GPU_TUNED_SELF_DIR}/devices/${GPU_TUNED_ARG_VARIANT}.conf"
+# shellcheck source=common.sh
+source "${GPU_TUNED_SELF_DIR}/common.sh"
 
 DIST_DIR="${REPO_ROOT}/dist/${GPU_TUNED_VARIANT}"
 WHEEL_FILE="$(find "${DIST_DIR}" -maxdepth 1 -name '*.whl' | head -1)"
@@ -42,7 +44,7 @@ WHEEL_BASENAME="$(basename "${WHEEL_FILE}")"
 
 # e.g. vllm-8.4.dev7+g2b9dcbd29.gb10.cu133-cp314-...whl -> full version
 # 8.4.dev7+g2b9dcbd29.gb10.cu133, base 8.4.dev7 (before "+").
-FULL_VERSION="$(echo "${WHEEL_BASENAME}" | sed -E 's/^vllm-([^-]+)-.*/\1/')"
+FULL_VERSION="$(gpu_tuned_wheel_version "${WHEEL_FILE}" vllm)" || exit 1
 BASE_VERSION="${FULL_VERSION%%+*}"
 
 CUDA_TAG="$(echo "${FULL_VERSION}" | grep -oE 'cu[0-9]+' | head -1)"
