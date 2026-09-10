@@ -126,13 +126,15 @@ else()
     FetchContent_Declare(
             vllm-flash-attn
             GIT_REPOSITORY https://github.com/vllm-project/flash-attention.git
-            GIT_TAG 2c839c33742309ec41e620bf837495ec9926c56e
+            GIT_TAG 506341a143fcabd4bb79052a7605ada727d6b3f5
             GIT_PROGRESS TRUE
             # Don't share the vllm-flash-attn build between build types
             BINARY_DIR ${CMAKE_BINARY_DIR}/vllm-flash-attn
             # This pinned commit's PYTHON_SUPPORTED_VERSIONS list predates
             # Python 3.14 support; add it so the version-check macro in
-            # cmake/utils.cmake doesn't hard-fail on 3.14 interpreters.
+            # cmake/utils.cmake doesn't hard-fail on 3.14 interpreters. If a
+            # future tag bump already lists 3.14, this sed simply finds no
+            # match and is a no-op.
             PATCH_COMMAND sed -i "s/\"3.13\")/\"3.13;3.14\")/" CMakeLists.txt
     )
   endif()
