@@ -1245,6 +1245,27 @@ def get_nvcc_cuda_version() -> Version:
     return nvcc_cuda_version
 
 
+def _gb10_tuning_commit_count() -> str | None:
+    """Commits on tuned-builds since it diverged from main (i.e. ahead of
+    upstream) -- the "tuning-vN" marker every other tuned-builds repo's
+    tuned/wheel.sh now adds (zbrad/pytorch, zbrad/flash-attention-vllm,
+    zbrad/flash-attention): setuptools_scm's own dev-distance mixes
+    upstream-since-last-tag and our own commits together, so it can't say
+    on its own "how much of our tuned-builds work landed since an earlier
+    wheel was built." Returns None (marker omitted, not build-failing) if
+    git or the `main` ref isn't available -- this is cosmetic.
+    """
+    try:
+        return subprocess.check_output(
+            ["git", "rev-list", "--count", "main..HEAD"],
+            cwd=ROOT_DIR,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+
 def get_vllm_version() -> str:
     # Allow overriding the version. This is useful to build platform-specific
     # wheels (e.g. CPU, TPU) without modifying the source.
@@ -1271,6 +1292,7 @@ def get_vllm_version() -> str:
             # silently dropped on hosts where nvcc's version happens to match
             # VLLM_MAIN_CUDA_VERSION exactly.
             gb10_build = bool(os.environ.get("VLLM_GB10_BUILD"))
+            tuning_count = _gb10_tuning_commit_count() if gb10_build else None
             cuda_version = str(get_nvcc_cuda_version())
             if cuda_version != envs.VLLM_MAIN_CUDA_VERSION:
                 cuda_version_str = cuda_version.replace(".", "")[:3]
@@ -1281,9 +1303,14 @@ def get_vllm_version() -> str:
                         if gb10_build
                         else f"cu{cuda_version_str}"
                     )
+                    if gb10_build and tuning_count is not None:
+                        tag += f".tuning-v{tuning_count}"
                     version += f"{sep}{tag}"
             elif gb10_build and "sdist" not in sys.argv:
-                version += f"{sep}gb10"
+                tag = "gb10"
+                if tuning_count is not None:
+                    tag += f".tuning-v{tuning_count}"
+                version += f"{sep}{tag}"
     elif _is_hip():
         # Get the Rocm Version
         rocm_version = get_rocm_version() or torch.version.hip
