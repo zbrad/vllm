@@ -40,10 +40,15 @@ else()
   set(_deepgemm_bin "${_deepgemm_fc_root}/deepgemm-build")
   set(_deepgemm_sub "${_deepgemm_fc_root}/deepgemm-subbuild")
 
-  if(EXISTS "${_deepgemm_src}/csrc/python_api.cpp")
+  vllm_fetch_content_checkout_matches_tag(_deepgemm_cached_ok
+    "${_deepgemm_src}" "${_DEEPGEMM_UPSTREAM_TAG}")
+  if(EXISTS "${_deepgemm_src}/csrc/python_api.cpp" AND _deepgemm_cached_ok)
     set(deepgemm_SOURCE_DIR "${_deepgemm_src}")
     set(deepgemm_BINARY_DIR "${_deepgemm_bin}")
   else()
+    # Stale checkout from a since-changed GIT_TAG -- FetchContent_Populate
+    # refuses to populate into a non-empty SOURCE_DIR, so clear it first.
+    file(REMOVE_RECURSE "${_deepgemm_src}" "${_deepgemm_bin}" "${_deepgemm_sub}")
     FetchContent_Populate(
       deepgemm
       SUBBUILD_DIR "${_deepgemm_sub}"

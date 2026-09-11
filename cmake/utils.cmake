@@ -1,4 +1,35 @@
 #
+# Check whether an already-populated FetchContent git checkout at SRC_DIR is
+# still at EXPECTED_TAG (a commit SHA). Sets OUT_VAR to TRUE only when
+# SRC_DIR/.git exists and its checked-out HEAD matches. Used by
+# external_projects that hand-roll `if(EXISTS <marker-file>) reuse else()
+# FetchContent_Populate() endif()` (see qutlass.cmake/deepgemm.cmake) to
+# avoid CMP0169's "one-argument FetchContent_Populate(name) after Declare is
+# invalid" restriction -- that pattern bypasses FetchContent's own tag
+# tracking, so a stale checkout from a since-changed GIT_TAG silently gets
+# reused forever instead of re-fetched (bit us for real: qutlass-src and
+# deepgemm-src both sat pinned to months-old commits across several GIT_TAG
+# bumps, until a torch stable-ABI header incompatibility introduced upstream
+# made the staleness impossible to miss).
+function(vllm_fetch_content_checkout_matches_tag OUT_VAR SRC_DIR EXPECTED_TAG)
+  set(${OUT_VAR} FALSE PARENT_SCOPE)
+  if(NOT EXISTS "${SRC_DIR}/.git")
+    return()
+  endif()
+  execute_process(
+    COMMAND git -C "${SRC_DIR}" rev-parse HEAD
+    OUTPUT_VARIABLE _checkout_head
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE _checkout_result)
+  if(NOT _checkout_result EQUAL 0)
+    return()
+  endif()
+  if(_checkout_head STREQUAL "${EXPECTED_TAG}")
+    set(${OUT_VAR} TRUE PARENT_SCOPE)
+  endif()
+endfunction()
+
+#
 # Attempt to find the python package that uses the same python executable as
 # `EXECUTABLE` and is one of the `SUPPORTED_VERSIONS`.
 #

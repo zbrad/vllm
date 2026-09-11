@@ -32,10 +32,15 @@ else()
   set(_qutlass_bin "${_qutlass_fc_root}/qutlass-build")
   set(_qutlass_sub "${_qutlass_fc_root}/qutlass-subbuild")
 
-  if(EXISTS "${_qutlass_src}/qutlass/csrc/bindings.cpp")
+  vllm_fetch_content_checkout_matches_tag(_qutlass_cached_ok
+    "${_qutlass_src}" "${_QUTLASS_UPSTREAM_TAG}")
+  if(EXISTS "${_qutlass_src}/qutlass/csrc/bindings.cpp" AND _qutlass_cached_ok)
     set(qutlass_SOURCE_DIR "${_qutlass_src}")
     set(qutlass_BINARY_DIR "${_qutlass_bin}")
   else()
+    # Stale checkout from a since-changed GIT_TAG -- FetchContent_Populate
+    # refuses to populate into a non-empty SOURCE_DIR, so clear it first.
+    file(REMOVE_RECURSE "${_qutlass_src}" "${_qutlass_bin}" "${_qutlass_sub}")
     FetchContent_Populate(
       qutlass
       SUBBUILD_DIR "${_qutlass_sub}"
