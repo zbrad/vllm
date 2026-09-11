@@ -90,3 +90,33 @@ else
     echo "Building vllm for TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}"
     pip install -e .
 fi
+
+echo ""
+echo "Smoke test: import vllm, confirm its compiled extensions actually load..."
+# A wheel finishing install here only proves setup.py/CMake ran to
+# completion -- it says nothing about whether the resulting extensions
+# actually work at runtime. Bit us for real: a prebuilt vllm_flash_attn
+# wheel (GB10's GPU_TUNED_NEEDS_PREBUILT_DEPS path) built against an
+# older torch installed silently -- it imports fine, `pip show` looks
+# correct, and the ONLY symptom was a swallowed ImportError two layers
+# down (vllm.vllm_flash_attn.flash_attn_interface's own try/except),
+# surfacing only much later during an actual model load, as an
+# "architecture failed to be inspected" error with no obvious link back
+# to flash-attn at all. Catch that class of failure here instead, right
+# after the build that caused it.
+python3 - <<'PYEOF'
+import vllm  # noqa: F401 -- import alone exercises _C, _moe_C, etc.
+
+from vllm.vllm_flash_attn import flash_attn_interface as fi
+
+if not (fi.FA2_AVAILABLE or fi.FA3_AVAILABLE):
+    raise SystemExit(
+        "FAIL: vllm imported, but neither FA2 nor FA3 flash-attn extension "
+        f"loaded (FA2: {fi.FA2_UNAVAILABLE_REASON}; FA3: {fi.FA3_UNAVAILABLE_REASON}). "
+        "This usually means the prebuilt/compiled flash-attn extension is "
+        "ABI-incompatible with the torch build actually installed -- check "
+        "whether flash-attn (or its prebuilt wheel, on GB10) was rebuilt "
+        "against the SAME torch build this vllm was just built against."
+    )
+print(f"OK: vllm {vllm.__version__} imports cleanly, FA2={fi.FA2_AVAILABLE} FA3={fi.FA3_AVAILABLE}.")
+PYEOF
