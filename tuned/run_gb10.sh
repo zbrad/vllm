@@ -28,6 +28,21 @@ set -euo pipefail
 #   FLASHINFER_DISABLE_JIT= tuned/run_gb10.sh serve ...
 export FLASHINFER_DISABLE_JIT="${FLASHINFER_DISABLE_JIT-1}"
 
+# Asserts that THIS deployment's _vllm_fa2_C (zbrad/flash-attention-vllm's
+# tuned/build.sh gb10) was compiled with a real native sm_121a cubin
+# (CUDA_ARCHS=12.1a), not upstream's PTX-only consumer-Blackwell build --
+# verified via cuobjdump (no embedded PTX) at the time this was added, see
+# vllm/platforms/cuda.py's _flash_attn_no_ptx_asserted(). Lets that check
+# skip a false-positive PTX/driver-version hard failure it would otherwise
+# raise for every GB10 box, gb10-tuned-build or not. Deliberately a
+# separate, explicit assertion rather than inferred from the gb10 build
+# marker alone -- a gb10 build isn't guaranteed to always be compiled this
+# way (see that function's own docstring). Same unset-vs-empty truthiness
+# as FLASHINFER_DISABLE_JIT above -- unset it (VLLM_FLASH_ATTN_NO_PTX=
+# tuned/run_gb10.sh serve ...) if this build's cubin coverage is ever in
+# doubt again.
+export VLLM_FLASH_ATTN_NO_PTX="${VLLM_FLASH_ATTN_NO_PTX-1}"
+
 # Fail fast, before spending minutes loading the real model, if this
 # torch/flashinfer combination has a known fp4-quantization arch-coverage
 # gap (torch built against CUDA>=12.9 redirects to a "120f" module this

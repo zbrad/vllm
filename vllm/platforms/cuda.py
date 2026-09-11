@@ -207,6 +207,40 @@ def with_nvml_context(fn: Callable[_P, _R]) -> Callable[_P, _R]:
 _BLACKWELL_CONSUMER_CAPABILITIES = (DeviceCapability(12, 0), DeviceCapability(12, 1))
 
 
+def _flash_attn_no_ptx_asserted() -> bool:
+    """True only when BOTH of these hold:
+
+    1. The installed vllm package's own local version carries the `gb10`
+       marker `setup.py`'s `get_vllm_version()` writes at build time
+       (`VLLM_GB10_BUILD=1`, set by `tuned/build.sh gb10`/`tuned/wheel.sh
+       gb10`).
+    2. `VLLM_FLASH_ATTN_NO_PTX` is set (set by `tuned/run_gb10.sh`, mirroring
+       `FLASHINFER_DISABLE_JIT`'s pattern there, and `FLASH_ATTN_NO_PTX`'s
+       naming in zbrad/flash-attention's own tuned/env.sh).
+
+    Neither alone is sufficient. A "gb10 build" only describes *which
+    device this was built for*, not *how* -- zbrad/flash-attention-vllm's
+    `tuned/build.sh` currently always compiles with `CUDA_ARCHS=12.1a` (a
+    real, architecture-specific native cubin, verified via cuobjdump:
+    30+ native sm_121a cubins, zero embedded PTX, so it can never hit
+    cudaErrorUnsupportedPtxVersion), but that's an operational fact about
+    a specific build script's current behavior, not something this
+    runtime check can verify on its own -- a gb10 build could in
+    principle be compiled with a family-generic/PTX-carrying arch spec
+    instead, in which case skipping this check would be wrong. The env
+    var makes it an explicit, deliberate deployment assertion instead of
+    an inference from the version string alone -- and is meaningless (and
+    dangerous to honor) without the gb10 marker confirming this vllm
+    install is even the one that assertion was meant for.
+    """
+    if not os.environ.get("VLLM_FLASH_ATTN_NO_PTX"):
+        return False
+    try:
+        return "gb10" in importlib.metadata.version("vllm")
+    except importlib.metadata.PackageNotFoundError:
+        return False
+
+
 def _driver_max_cuda_version() -> tuple[int, int] | None:
     """Highest CUDA version the installed driver can PTX-JIT for, or None
     if it can't be determined (e.g. NVML unavailable). Deliberately doesn't
@@ -268,6 +302,19 @@ def _check_flash_attn_ptx_compat(device_capability: DeviceCapability) -> None:
     See https://github.com/vllm-project/vllm/issues/47397.
     """
     if device_capability not in _BLACKWELL_CONSUMER_CAPABILITIES:
+        return
+    if _flash_attn_no_ptx_asserted():
+        logger.info_once(
+            "Skipping the FLASH_ATTN PTX/driver compatibility check: this "
+            "GB10 tuned build has explicitly asserted (VLLM_FLASH_ATTN_NO_PTX, "
+            "set by tuned/run_gb10.sh) that its _vllm_fa2_C was compiled "
+            "with a real native sm_121a cubin (CUDA_ARCHS=12.1a in "
+            "zbrad/flash-attention-vllm's tuned/build.sh) rather than "
+            "upstream's PTX-only consumer-Blackwell build -- verified via "
+            "cuobjdump (no embedded PTX) at the time that assertion was "
+            "added, so it can't hit cudaErrorUnsupportedPtxVersion "
+            "regardless of driver/toolkit skew."
+        )
         return
     build_cuda = _build_cuda_version()
     if build_cuda is None:
