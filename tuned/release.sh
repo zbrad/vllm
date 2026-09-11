@@ -51,8 +51,18 @@ WHEEL_BASENAME="$(basename "${WHEEL_FILE}")"
 # visible in the title.
 FULL_VERSION="$(gpu_tuned_wheel_version "${WHEEL_FILE}" vllm)" || exit 1
 
+# Friendly title only -- RELEASE_TAG below stays the exact FULL_VERSION.
+# CUDA_VERSION_COMPACT/GIT_SHA/tuning count aren't computed anywhere else
+# in this file (vllm has no tuned/env.sh), so pull them back out of
+# FULL_VERSION rather than adding a second, possibly-drifting source for
+# them.
+GIT_SHA="$(git rev-parse --short HEAD)"
+BASE_VERSION="${FULL_VERSION%%.dev*}"          # setuptools_scm's guessed-next-version, before .devN
+CUDA_TAG="$(echo "${FULL_VERSION}" | grep -oE 'cu[0-9]+' | head -1)"
+TUNING_LABEL="$(echo "${FULL_VERSION}" | grep -oE 'tuning-v[0-9]+' | head -1)"
+
 RELEASE_TAG="v${FULL_VERSION}"
-RELEASE_TITLE="vLLM ${FULL_VERSION} — ${GPU_TUNED_HW_LABEL}"
+RELEASE_TITLE="vLLM ${BASE_VERSION} — ${GPU_TUNED_VARIANT} ${TUNING_LABEL:-(pre-tuning-v build)} (${CUDA_TAG}, ${GIT_SHA}) — ${GPU_TUNED_HW_LABEL}"
 
 echo "===================================================="
 echo "vllm ${GPU_TUNED_HW_LABEL} Release"
