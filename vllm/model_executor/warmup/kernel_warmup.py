@@ -6,6 +6,7 @@ This is useful specifically for JIT'ed kernels as we don't want JIT'ing to
 happen during model execution.
 """
 
+import contextlib
 import sys
 import time
 from typing import TYPE_CHECKING
@@ -196,7 +197,11 @@ def kernel_warmup(worker: "Worker", *, process_local_only: bool = False):
         )
 
     qwen_triton_warmup(worker.model_runner, worker.vllm_config.model_config)
-    qwen_vl_triton_warmup(worker.model_runner)
+    # _warm_vision eagerly imports Qwen3-VL's image processor even for
+    # non-VL models (same torchvision gap minimax_m3_msa_warmup guards
+    # against above) -- don't let it block warmup for every other model.
+    with contextlib.suppress(ImportError):
+        qwen_vl_triton_warmup(worker.model_runner)
     mamba_triton_warmup(worker.model_runner)
 
     compilation_config = worker.vllm_config.compilation_config
