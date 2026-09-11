@@ -42,15 +42,16 @@ if [[ -z "${WHEEL_FILE}" ]]; then
 fi
 WHEEL_BASENAME="$(basename "${WHEEL_FILE}")"
 
-# e.g. vllm-8.4.dev7+g2b9dcbd29.gb10.cu133-cp314-...whl -> full version
-# 8.4.dev7+g2b9dcbd29.gb10.cu133, base 8.4.dev7 (before "+").
+# e.g. vllm-8.4.dev7+g2b9dcbd29.gb10.cu133.tuning-v34-cp314-...whl -> full
+# version 8.4.dev7+g2b9dcbd29.gb10.cu133.tuning-v34. Used as-is for the
+# release tag: its local segment (git sha, variant, cuda tag, tuning-vN)
+# already carries everything a hand-rebuilt -<variant>-<cuda_tag> suffix
+# would, and stripping-then-re-appending only part of it (the old shape
+# here) would silently drop tuning-vN from the tag while it stayed
+# visible in the title.
 FULL_VERSION="$(gpu_tuned_wheel_version "${WHEEL_FILE}" vllm)" || exit 1
-BASE_VERSION="${FULL_VERSION%%+*}"
 
-CUDA_TAG="$(echo "${FULL_VERSION}" | grep -oE 'cu[0-9]+' | head -1)"
-[[ -z "${CUDA_TAG}" ]] && CUDA_TAG="unknown"
-
-RELEASE_TAG="v${BASE_VERSION}-${GPU_TUNED_VARIANT}-${CUDA_TAG}"
+RELEASE_TAG="v${FULL_VERSION}"
 RELEASE_TITLE="vLLM ${FULL_VERSION} — ${GPU_TUNED_HW_LABEL}"
 
 echo "===================================================="
