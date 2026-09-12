@@ -92,6 +92,20 @@ if [[ "${GPU_TUNED_NEEDS_PREBUILT_DEPS}" == "true" ]]; then
     # requirements/gb10.txt above.
     pip install --no-deps "${GPU_TUNED_FLASH_ATTN_WHEEL_URL}"
 
+    echo "Validating installed build-info stamps carry provenance for this variant"
+    # Confirms what actually landed in this venv, independent of pip's own
+    # (self-reported) version metadata -- traces back to a real git commit
+    # and build time. Only checks torch/vllm_flash_attn: flashinfer has no
+    # embed_build_info call yet (separate, tracked follow-up). Fatal on
+    # purpose -- this fleet's stamping pipeline was silently discarding
+    # every stamp until this session (see gpu_tuned_verify_build_info's
+    # header comment in tuned-common.sh); a missing/wrong stamp here means
+    # either an unfixed producer wheel or a genuinely wrong install.
+    TORCH_CUDA_SO="$(python3 -c 'import os, torch; print(os.path.join(os.path.dirname(torch.__file__), "lib", "libtorch_cuda.so"))')"
+    gpu_tuned_verify_build_info "${TORCH_CUDA_SO}" torch "${GPU_TUNED_VARIANT}" pytorch_build_info
+    FA2_SO="$(python3 -c 'import os, vllm_flash_attn; print(os.path.join(os.path.dirname(vllm_flash_attn.__file__), "_vllm_fa2_C.abi3.so"))')"
+    gpu_tuned_verify_build_info "${FA2_SO}" vllm_flash_attn "${GPU_TUNED_VARIANT}" flash_attn_build_info
+
     echo "Building vllm for TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST} (MAX_JOBS=${MAX_JOBS}, NVCC_THREADS=${NVCC_THREADS})"
     pip install --no-build-isolation -e .
 else
