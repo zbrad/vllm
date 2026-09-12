@@ -28,6 +28,16 @@ if [[ -z "${FLASHINFER_DISABLE_JIT-}" ]]; then
   unset FLASHINFER_DISABLE_JIT
 fi
 
+# Same assertion tuned/run_gb10.sh makes (see _check_flash_attn_ptx_compat
+# in vllm/platforms/cuda.py): zbrad/flash-attention-vllm's tuned/build.sh
+# compiles _vllm_fa2_C with CUDA_ARCHS=12.1a, a real native sm_121a cubin
+# (verified via cuobjdump, no embedded PTX) -- not upstream's PTX-only
+# consumer-Blackwell build the check otherwise guards against. Without
+# this, the dense-NemotronH case below (flash-attn attention backend)
+# fails on a driver/toolkit-skew false positive rather than exercising
+# the actual stack.
+export VLLM_FLASH_ATTN_NO_PTX="${VLLM_FLASH_ATTN_NO_PTX-1}"
+
 # model_id:kv_cache_dtype:mamba_backend:label quadruples (kv_cache_dtype/
 # mamba_backend empty -> vLLM defaults "auto"/"triton"). The -Tiny/
 # -tiny-random entries are small stand-ins sharing the relevant AOT-scoped
