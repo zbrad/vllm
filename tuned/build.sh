@@ -30,6 +30,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 GPU_TUNED_SELF_DIR="${REPO_ROOT}/tuned"
+# shellcheck source=common.sh
+source "${GPU_TUNED_SELF_DIR}/common.sh"
 # shellcheck source=devices/rtx50.conf
 source "${GPU_TUNED_SELF_DIR}/devices/${GPU_TUNED_ARG_VARIANT}.conf"
 
@@ -69,6 +71,15 @@ if [[ "${GPU_TUNED_NEEDS_PREBUILT_DEPS}" == "true" ]]; then
     # own torch==2.11.0 pin (for its own dependency resolution only) -- drop it
     # so it doesn't fight the real GB10 torch installed just below.
     grep -v '^torch' requirements/build/cuda.txt | pip install -r /dev/stdin
+
+    echo "Auditing already-installed tuned packages before installing over them"
+    # Non-fatal (WARNING only) -- this install is about to run regardless;
+    # the point is surfacing a downgrade/replacement risk (e.g. a plain
+    # PyPI torch that landed here via some unrelated pip install) before
+    # it happens instead of discovering it later via an ABI mismatch or a
+    # version-check error deep into a model load.
+    gpu_tuned_audit_pinned pip torch=gb10 vllm_flash_attn=gb10 flashinfer-python=gb10
+    gpu_tuned_audit_stray pip flashinfer-cubin
 
     echo "Installing GB10 requirements (torch @ URL, flashinfer, etc.)"
     pip install -r requirements/gb10.txt
