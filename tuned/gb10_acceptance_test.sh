@@ -73,11 +73,31 @@ export VLLM_FLASH_ATTN_NO_PTX="${VLLM_FLASH_ATTN_NO_PTX-1}"
 # This does not substitute for testing the real Super-120B checkpoint
 # (different scale entirely), but is the strongest available evidence
 # short of that checkpoint that the combination works on this stack.
+#
+# Qwen2-VL (tiny-random): exercises the vision-language code path, in
+# particular qwen_vl_triton_warmup (kernel_warmup.py) -- guarded this
+# session (e51fa53e77) against a missing-torchvision ImportError, but
+# never actually exercised by this suite before now (every other case
+# here is text-only). Random weights, text-only prompt below (no image
+# passed), so this proves the model loads and the warmup path runs
+# clean, not that VL generation quality is sane -- same spirit as the
+# other tiny-random stand-ins.
+#
+# DeepSeek-V3 (tiny-random): closes the MLA-attention coverage gap left
+# by both DeepSeek-V4 stand-ins above being 100% skipped. Real MLA head
+# dims (qk_rope_head_dim=16, kv_lora_rank=16, v_head_dim=16) and routed
+# MoE experts, but plain BF16 -- no FP8/NVFP4 quantization, so it doesn't
+# touch DeepGEMM's NVFP4 SF-layout transform (the deepgemm-sm121 blocker
+# above is specific to that quantized-expert-scale code path). kv_cache_
+# dtype left at the default "auto" rather than fp8_ds_mla (used by the
+# skipped V4 entries) to keep this a plain MLA-path smoke test.
 MODELS=(
   "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16::::NemotronH (dense, stand-in for Nemotron-3-Super-120B)"
   "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4::flashinfer::NemotronH (NVFP4 MoE, mamba_head_dim=64, stand-in for Nemotron-3-Super-120B's AOT-scoped MoE+SSU path)"
   "yujiepan/deepseek-v4-tiny-random:fp8_ds_mla::deepgemm-sm121:DeepSeek-V4 MLA (tiny-random, stand-in for DeepSeek-V4-Flash)"
   "silence09/DeepSeek-V4-Pro-Tiny:fp8_ds_mla::bad-checkpoint:DeepSeek-V4 MLA (Pro-Tiny, second stand-in for cross-check)"
+  "yujiepan/qwen2-vl-tiny-random::::Qwen2-VL (tiny-random, vision-language path + qwen_vl_triton_warmup torchvision guard)"
+  "yujiepan/deepseek-v3-tiny-random::::DeepSeek-V3 MLA (tiny-random, BF16, closes the MLA-attention coverage gap)"
 )
 
 # Known, confirmed reasons DeepSeek-V4 can't run on this stack today --
