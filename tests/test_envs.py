@@ -14,13 +14,13 @@ from vllm.envs import (
     env_set_with_choices,
     env_with_choices,
     environment_variables,
-    validate_environ,
 )
 from vllm.exceptions import VLLMValidationError
+from vllm.platforms.interface import Platform
 
 
 class TestValidateEnviron:
-    """Test cases for validate_environ's handling of removed env vars."""
+    """Test cases for Platform.validate_environ's handling of removed env vars."""
 
     def test_removed_var_warns_with_actionable_message(self, caplog_vllm):
         # vllm's own logger has propagate=False (see vllm/logger.py), so the
@@ -31,7 +31,7 @@ class TestValidateEnviron:
             patch.dict(os.environ, {"VLLM_ATTENTION_BACKEND": "flashinfer"}),
             caplog_vllm.at_level("WARNING", logger="vllm"),
         ):
-            validate_environ(hard_fail=False)
+            Platform.validate_environ(hard_fail=False)
         assert any(
             "VLLM_ATTENTION_BACKEND is no longer read by vLLM" in message
             and "--attention-backend" in message
@@ -45,7 +45,7 @@ class TestValidateEnviron:
             patch.dict(os.environ, {"VLLM_ATTENTION_BACKEND": "flashinfer"}),
             caplog_vllm.at_level("WARNING", logger="vllm"),
         ):
-            validate_environ(hard_fail=True)
+            Platform.validate_environ(hard_fail=True)
         assert any(
             "VLLM_ATTENTION_BACKEND is no longer read by vLLM" in message
             for message in caplog_vllm.messages
@@ -56,19 +56,24 @@ class TestValidateEnviron:
             patch.dict(os.environ, {"VLLM_THIS_IS_NOT_A_REAL_VAR": "1"}),
             pytest.raises(ValueError, match="Unknown vLLM environment variable"),
         ):
-            validate_environ(hard_fail=True)
+            Platform.validate_environ(hard_fail=True)
 
     def test_unrecognized_var_warns_without_hard_fail(self, caplog_vllm):
         with (
             patch.dict(os.environ, {"VLLM_THIS_IS_NOT_A_REAL_VAR": "1"}),
             caplog_vllm.at_level("WARNING", logger="vllm"),
         ):
-            validate_environ(hard_fail=False)
+            Platform.validate_environ(hard_fail=False)
         assert any(
             "Unknown vLLM environment variable detected: VLLM_THIS_IS_NOT_A_REAL_VAR"
             in message
             for message in caplog_vllm.messages
         )
+
+
+def test_object_storage_shm_default_name():
+    """The generated name must fit macOS's shared-memory name limit."""
+    assert len(envs._generate_shm_name()) <= 30
 
 
 def test_getattr_without_cache(monkeypatch: pytest.MonkeyPatch):
@@ -94,41 +99,6 @@ def test_api_key_is_not_compile_factor(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("VLLM_API_KEY", "sk-super-secret")
 
     assert "VLLM_API_KEY" not in envs.compile_factors()
-
-
-def test_scale_out_endpoints_flag_is_runtime_only(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("VLLM_ENABLE_SCALE_OUT_ENDPOINTS", "1")
-
-    assert envs.VLLM_ENABLE_SCALE_OUT_ENDPOINTS is True
-    assert "VLLM_ENABLE_SCALE_OUT_ENDPOINTS" not in envs.compile_factors()
-
-
-def test_scale_out_endpoints_flag_distinguishes_unset_from_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.delenv("VLLM_ENABLE_SCALE_OUT_ENDPOINTS", raising=False)
-    assert envs.VLLM_ENABLE_SCALE_OUT_ENDPOINTS is None
-
-    monkeypatch.setenv("VLLM_ENABLE_SCALE_OUT_ENDPOINTS", "0")
-    assert envs.VLLM_ENABLE_SCALE_OUT_ENDPOINTS is False
-
-
-def test_scale_out_endpoints_flag_treats_empty_as_unset(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setenv("VLLM_ENABLE_SCALE_OUT_ENDPOINTS", "")
-
-    assert envs.VLLM_ENABLE_SCALE_OUT_ENDPOINTS is None
-
-
-@pytest.mark.parametrize("value", ["-1", "2", "01", "+1", "invalid", " "])
-def test_scale_out_endpoints_flag_rejects_values_other_than_zero_or_one(
-    monkeypatch: pytest.MonkeyPatch, value: str
-):
-    monkeypatch.setenv("VLLM_ENABLE_SCALE_OUT_ENDPOINTS", value)
-
-    with pytest.raises(ValueError, match="must be 0 or 1"):
-        _ = envs.VLLM_ENABLE_SCALE_OUT_ENDPOINTS
 
 
 def test_p2p_side_channel_defaults_and_override(monkeypatch: pytest.MonkeyPatch):
