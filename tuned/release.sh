@@ -42,12 +42,12 @@ if [[ -z "${WHEEL_FILE}" ]]; then
 fi
 WHEEL_BASENAME="$(basename "${WHEEL_FILE}")"
 
-# e.g. vllm-8.4.dev7+g2b9dcbd29.gb10.cu133.tuning-v34-cp314-...whl -> full
-# version 8.4.dev7+g2b9dcbd29.gb10.cu133.tuning-v34. Used as-is for the
-# release tag: its local segment (git sha, variant, cuda tag, tuning-vN)
+# e.g. vllm-8.4.dev7+g2b9dcbd29.gb10.cu133.tuning.34-cp314-...whl -> full
+# version 8.4.dev7+g2b9dcbd29.gb10.cu133.tuning.34. Used as-is for the
+# release tag: its local segment (git sha, variant, cuda tag, tuning.N)
 # already carries everything a hand-rebuilt -<variant>-<cuda_tag> suffix
 # would, and stripping-then-re-appending only part of it (the old shape
-# here) would silently drop tuning-vN from the tag while it stayed
+# here) would silently drop tuning.N from the tag while it stayed
 # visible in the title.
 FULL_VERSION="$(gpu_tuned_wheel_version "${WHEEL_FILE}" vllm)" || exit 1
 
@@ -59,10 +59,10 @@ FULL_VERSION="$(gpu_tuned_wheel_version "${WHEEL_FILE}" vllm)" || exit 1
 GIT_SHA="$(git rev-parse --short HEAD)"
 BASE_VERSION="${FULL_VERSION%%.dev*}"          # setuptools_scm's guessed-next-version, before .devN
 CUDA_TAG="$(echo "${FULL_VERSION}" | grep -oE 'cu[0-9]+' | head -1)"
-TUNING_LABEL="$(echo "${FULL_VERSION}" | grep -oE 'tuning[-.]v[0-9]+' | head -1 || true)"
+TUNING_LABEL="$(gpu_tuned_tuning_label "${FULL_VERSION}")"
 
 RELEASE_TAG="v${FULL_VERSION}"
-RELEASE_TITLE="vLLM ${BASE_VERSION} — ${GPU_TUNED_VARIANT} ${TUNING_LABEL:-(pre-tuning-v build)} (${CUDA_TAG}, ${GIT_SHA}) — ${GPU_TUNED_HW_LABEL}"
+RELEASE_TITLE="vLLM ${BASE_VERSION} — ${GPU_TUNED_VARIANT} ${TUNING_LABEL:-(pre-tuning build)} (${CUDA_TAG}, ${GIT_SHA}) — ${GPU_TUNED_HW_LABEL}"
 
 echo "===================================================="
 echo "vllm ${GPU_TUNED_HW_LABEL} Release"

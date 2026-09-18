@@ -1257,7 +1257,7 @@ def get_nvcc_cuda_version() -> Version:
 
 def _gb10_tuning_commit_count() -> str | None:
     """Commits on tuned-builds since it diverged from main (i.e. ahead of
-    upstream) -- the "tuning-vN" marker every other tuned-builds repo's
+    upstream) -- the "tuning.N" marker every other tuned-builds repo's
     tuned/wheel.sh now adds (zbrad/pytorch, zbrad/flash-attention-vllm,
     zbrad/flash-attention): setuptools_scm's own dev-distance mixes
     upstream-since-last-tag and our own commits together, so it can't say
@@ -1324,12 +1324,12 @@ def get_vllm_version() -> str:
                             else f"cu{cuda_version_str}"
                         )
                         if gb10_build and tuning_count is not None:
-                            tag += f".tuning-v{tuning_count}"
+                            tag += f".tuning.{tuning_count}"
                         version += f"{sep}{tag}"
                 elif gb10_build and "sdist" not in sys.argv:
                     tag = "gb10"
                     if tuning_count is not None:
-                        tag += f".tuning-v{tuning_count}"
+                        tag += f".tuning.{tuning_count}"
                     version += f"{sep}{tag}"
         elif _is_hip():
             # Get the Rocm Version
