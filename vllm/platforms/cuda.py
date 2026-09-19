@@ -7,7 +7,6 @@ pynvml. However, it should not initialize cuda context.
 from __future__ import annotations
 
 import contextlib
-import importlib.metadata
 import os
 import platform
 from collections.abc import Callable
@@ -15,7 +14,6 @@ from datetime import timedelta
 from functools import cache, lru_cache, wraps
 from typing import TYPE_CHECKING, NamedTuple, TypeVar
 
-import regex as re
 import torch
 from torch.distributed import PrefixStore, ProcessGroup
 from torch.distributed.distributed_c10d import is_nccl_available
@@ -27,6 +25,7 @@ import vllm._C_stable_libtorch  # noqa
 with contextlib.suppress(ImportError):
     import vllm._qutlass_C  # noqa
 import vllm.envs as envs
+from vllm.ext.platforms.cuda_ext import CudaExt
 from vllm.logger import init_logger
 from vllm.utils.import_utils import import_pynvml
 from vllm.v1.attention.backends.registry import AttentionBackendEnum
@@ -206,142 +205,6 @@ def with_nvml_context(fn: Callable[_P, _R]) -> Callable[_P, _R]:
             pynvml.nvmlShutdown()
 
     return wrapper
-
-
-# Consumer Blackwell (sm_120/121, e.g. RTX Pro 6000, GB10/DGX Spark). Unlike
-# datacenter Blackwell, `_vllm_fa2_C` ships no native cubin for these and
-# always falls back to PTX JIT.
-_BLACKWELL_CONSUMER_CAPABILITIES = (DeviceCapability(12, 0), DeviceCapability(12, 1))
-
-
-def _flash_attn_no_ptx_asserted() -> bool:
-    """True only when BOTH of these hold:
-
-    1. The installed vllm package's own local version carries the `gb10`
-       marker `setup.py`'s `get_vllm_version()` writes at build time
-       (`VLLM_GB10_BUILD=1`, set by `tuned/build.sh gb10`/`tuned/wheel.sh
-       gb10`).
-    2. `VLLM_FLASH_ATTN_NO_PTX` is set (set by `tuned/run_gb10.sh`, mirroring
-       `FLASHINFER_DISABLE_JIT`'s pattern there, and `FLASH_ATTN_NO_PTX`'s
-       naming in zbrad/flash-attention's own tuned/env.sh).
-
-    Neither alone is sufficient. A "gb10 build" only describes *which
-    device this was built for*, not *how* -- zbrad/flash-attention-vllm's
-    `tuned/build.sh` currently always compiles with `CUDA_ARCHS=12.1a` (a
-    real, architecture-specific native cubin, verified via cuobjdump:
-    30+ native sm_121a cubins, zero embedded PTX, so it can never hit
-    cudaErrorUnsupportedPtxVersion), but that's an operational fact about
-    a specific build script's current behavior, not something this
-    runtime check can verify on its own -- a gb10 build could in
-    principle be compiled with a family-generic/PTX-carrying arch spec
-    instead, in which case skipping this check would be wrong. The env
-    var makes it an explicit, deliberate deployment assertion instead of
-    an inference from the version string alone -- and is meaningless (and
-    dangerous to honor) without the gb10 marker confirming this vllm
-    install is even the one that assertion was meant for.
-    """
-    if not os.environ.get("VLLM_FLASH_ATTN_NO_PTX"):
-        return False
-    try:
-        return "gb10" in importlib.metadata.version("vllm")
-    except importlib.metadata.PackageNotFoundError:
-        return False
-
-
-def _driver_max_cuda_version() -> tuple[int, int] | None:
-    """Highest CUDA version the installed driver can PTX-JIT for, or None
-    if it can't be determined (e.g. NVML unavailable). Deliberately doesn't
-    use `@with_nvml_context`: that decorator lets `nvmlInit()` failures
-    propagate, which would crash attention-backend selection instead of
-    letting this optional check degrade gracefully."""
-    try:
-        pynvml.nvmlInit()
-    except pynvml.NVMLError:
-        return None
-    try:
-        raw = pynvml.nvmlSystemGetCudaDriverVersion_v2()
-        return (raw // 1000, (raw % 1000) // 10)
-    except pynvml.NVMLError:
-        return None
-    finally:
-        pynvml.nvmlShutdown()
-
-
-_VLLM_LOCAL_VERSION_CUDA_RE = re.compile(r"\bcu(\d{3})\b")
-
-
-def _build_cuda_version() -> tuple[int, int] | None:
-    """CUDA toolkit version vLLM's own C++/CUDA extensions were compiled
-    with, read off the installed package's local version label (e.g.
-    `0.1.dev1+g491f075.cu133` -> (13, 3)), the same `cu\\d{3}` convention
-    `setup.py`'s `get_vllm_version()` writes at build time. That suffix is
-    only appended when the build's CUDA version differs from vLLM's pinned
-    main version (`envs.VLLM_MAIN_CUDA_VERSION`) -- when it matches exactly,
-    no suffix is written, so fall back to the main version in that case.
-
-    Deliberately not `torch.version.cuda`: that reflects the CUDA version
-    the pre-built torch *wheel* was compiled with, which is a separate build
-    step from vLLM's own from-source extension compilation and can disagree
-    with it (e.g. a from-source vLLM build using a newer local `nvcc` than
-    the torch wheel it links against).
-    """
-    try:
-        version_str = importlib.metadata.version("vllm")
-    except importlib.metadata.PackageNotFoundError:
-        version_str = ""
-    match = _VLLM_LOCAL_VERSION_CUDA_RE.search(version_str)
-    if match is not None:
-        digits = match.group(1)
-        return (int(digits[:2]), int(digits[2]))
-    try:
-        major_str, minor_str = envs.VLLM_MAIN_CUDA_VERSION.split(".")[:2]
-        return (int(major_str), int(minor_str))
-    except ValueError:
-        return None
-
-
-def _check_flash_attn_ptx_compat(device_capability: DeviceCapability) -> None:
-    """`_vllm_fa2_C` has no native cubin on consumer Blackwell, so it PTX-JITs
-    at kernel-launch time. If vLLM was built with a newer CUDA toolkit than
-    the installed driver supports, that JIT fails with
-    `cudaErrorUnsupportedPtxVersion` deep inside CUDA graph capture, often
-    after minutes of weight loading. Fail fast here instead.
-    See https://github.com/vllm-project/vllm/issues/47397.
-    """
-    if device_capability not in _BLACKWELL_CONSUMER_CAPABILITIES:
-        return
-    if _flash_attn_no_ptx_asserted():
-        logger.info_once(
-            "Skipping the FLASH_ATTN PTX/driver compatibility check: this "
-            "GB10 tuned build has explicitly asserted (VLLM_FLASH_ATTN_NO_PTX, "
-            "set by tuned/run_gb10.sh) that its _vllm_fa2_C was compiled "
-            "with a real native sm_121a cubin (CUDA_ARCHS=12.1a in "
-            "zbrad/flash-attention-vllm's tuned/build.sh) rather than "
-            "upstream's PTX-only consumer-Blackwell build -- verified via "
-            "cuobjdump (no embedded PTX) at the time that assertion was "
-            "added, so it can't hit cudaErrorUnsupportedPtxVersion "
-            "regardless of driver/toolkit skew."
-        )
-        return
-    build_cuda = _build_cuda_version()
-    if build_cuda is None:
-        return
-    driver_cuda = _driver_max_cuda_version()
-    if driver_cuda is None:
-        return
-    if build_cuda > driver_cuda:
-        raise RuntimeError(
-            f"vLLM was built with CUDA {build_cuda[0]}.{build_cuda[1]}, but "
-            f"the installed driver only supports CUDA {driver_cuda[0]}."
-            f"{driver_cuda[1]} for runtime PTX compilation. The FLASH_ATTN "
-            f"backend (_vllm_fa2_C) has no native cubin for this GPU "
-            f"(sm_{device_capability.major}{device_capability.minor}) and "
-            "requires PTX JIT, which will fail with "
-            "cudaErrorUnsupportedPtxVersion. Fix: update your driver, "
-            "rebuild vLLM against a CUDA toolkit <= the driver's supported "
-            "version, or pass --attention-backend flashinfer (or "
-            "TRITON_ATTN) to avoid this kernel."
-        )
 
 
 @cache
@@ -612,7 +475,7 @@ class CudaPlatformBase(Platform):
                 )
             else:
                 if selected_backend == AttentionBackendEnum.FLASH_ATTN:
-                    _check_flash_attn_ptx_compat(device_capability)
+                    CudaExt.check_flash_attn_ptx_compat(device_capability)
                 logger.info("Using %s backend.", selected_backend)
                 return _backend_cls_path(backend_class)
 
@@ -674,7 +537,7 @@ class CudaPlatformBase(Platform):
                 )
 
         if selected_backend == AttentionBackendEnum.FLASH_ATTN:
-            _check_flash_attn_ptx_compat(device_capability)
+            CudaExt.check_flash_attn_ptx_compat(device_capability)
 
         logger.info_once(
             "Using %s attention backend out of potential backends: %s.",
