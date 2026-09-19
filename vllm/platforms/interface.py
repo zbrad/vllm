@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 import torch
 
+from vllm.ext.platforms.interface_ext import InterfaceExt
 from vllm.logger import init_logger
 from vllm.v1.attention.backends.registry import AttentionBackendEnum
 
@@ -1265,14 +1266,9 @@ class Platform:
         from vllm import envs
 
         for env in os.environ:
-            if env in envs.REMOVED_ENVIRONMENT_VARIABLES:
-                logger.warning(
-                    "Environment variable %s is no longer read by vLLM and "
-                    "has no effect; use %s instead.",
-                    env,
-                    envs.REMOVED_ENVIRONMENT_VARIABLES[env],
-                )
-            elif env.startswith("VLLM_") and env not in envs.environment_variables:
+            if InterfaceExt.warn_if_removed_env(env):
+                continue
+            if env.startswith("VLLM_") and env not in envs.environment_variables:
                 if hard_fail:
                     raise ValueError(
                         f"Unknown vLLM environment variable detected: {env}"

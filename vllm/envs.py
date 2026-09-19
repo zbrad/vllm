@@ -2262,15 +2262,6 @@ def is_set(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-# Env vars vLLM used to read that were removed in favor of a CLI flag or a
-# different env var. Setting one now has no effect; the generic "unknown
-# variable" warning in Platform.validate_environ (vllm/platforms/interface.py)
-# doesn't say why, so call these out by name.
-REMOVED_ENVIRONMENT_VARIABLES: dict[str, str] = {
-    "VLLM_ATTENTION_BACKEND": "the --attention-backend CLI flag",
-}
-
-
 def compile_factors() -> dict[str, object]:
     """Return env vars used for torch.compile cache keys.
 
