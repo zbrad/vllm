@@ -30,6 +30,14 @@ source "${GPU_TUNED_SELF_DIR}/devices/${GPU_TUNED_ARG_VARIANT}.conf"
 
 export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-${GPU_TUNED_TORCH_ARCH}}"
 
+# setup.py derives the tuning.<N> counter from main..HEAD; refuse a stale main
+# before anything is deleted or built.
+# shellcheck source=common.sh
+source "${GPU_TUNED_SELF_DIR}/common.sh"
+if [[ "${GPU_TUNED_NEEDS_PREBUILT_DEPS}" == "true" ]]; then
+    gpu_tuned_check_main_current
+fi
+
 DIST_DIR="${REPO_ROOT}/dist/${GPU_TUNED_VARIANT}"
 rm -rf "${DIST_DIR}"
 mkdir -p "${DIST_DIR}"

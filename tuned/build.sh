@@ -38,6 +38,8 @@ source "${GPU_TUNED_SELF_DIR}/devices/${GPU_TUNED_ARG_VARIANT}.conf"
 export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-${GPU_TUNED_TORCH_ARCH}}"
 
 if [[ "${GPU_TUNED_NEEDS_PREBUILT_DEPS}" == "true" ]]; then
+    # setup.py derives the tuning.<N> counter from main..HEAD; refuse a stale main.
+    gpu_tuned_check_main_current
     # GB10: torch and flash-attention are consumed as prebuilt wheels
     # (zbrad/pytorch and zbrad/flash-attention GB10 GitHub Releases) instead
     # of being compiled here:
