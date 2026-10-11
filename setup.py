@@ -32,6 +32,10 @@ VLLM_GIT_DESCRIBE_COMMAND = [
     "--abbrev=40",
     "--match",
     "v[0-9]*",
+    # Fork-local (tuned-builds): skip our own wheel release tags, v<version>+gb10...; an
+    # upstream tag never contains "+", and describing from a .devN tag is an error.
+    "--exclude",
+    "*+*",
 ]
 
 

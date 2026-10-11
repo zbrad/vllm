@@ -26,6 +26,9 @@ VLLM_GIT_DESCRIBE_COMMAND = [
     "--abbrev=40",
     "--match",
     "v[0-9]*",
+    # Fork-local (tuned-builds): skip our own wheel release tags, v<version>+gb10...; see setup.py.
+    "--exclude",
+    "*+*",
 ]
 
 
