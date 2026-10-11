@@ -42,27 +42,35 @@ if [[ -z "${WHEEL_FILE}" ]]; then
 fi
 WHEEL_BASENAME="$(basename "${WHEEL_FILE}")"
 
-# e.g. vllm-8.4.dev7+g2b9dcbd29.gb10.cu133.tuning.34-cp314-...whl -> full
-# version 8.4.dev7+g2b9dcbd29.gb10.cu133.tuning.34. Used as-is for the
-# release tag: its local segment (git sha, variant, cuda tag, tuning.N)
+# e.g. vllm-8.4.dev7+g2b9dcbd29.gb10.cu133.20261011-cp314-...whl -> full
+# version 8.4.dev7+g2b9dcbd29.gb10.cu133.20261011. Used as-is for the
+# release tag: its local segment (git sha, variant, cuda tag, date label)
 # already carries everything a hand-rebuilt -<variant>-<cuda_tag> suffix
 # would, and stripping-then-re-appending only part of it (the old shape
-# here) would silently drop tuning.N from the tag while it stayed
+# here) would silently drop the label from the tag while it stayed
 # visible in the title.
 FULL_VERSION="$(gpu_tuned_wheel_version "${WHEEL_FILE}" vllm)" || exit 1
 
 # Friendly title only -- RELEASE_TAG below stays the exact FULL_VERSION.
-# CUDA_VERSION_COMPACT/GIT_SHA/tuning count aren't computed anywhere else
+# CUDA_VERSION_COMPACT/GIT_SHA/date label aren't computed anywhere else
 # in this file (vllm has no tuned/env.sh), so pull them back out of
 # FULL_VERSION rather than adding a second, possibly-drifting source for
 # them.
 GIT_SHA="$(git rev-parse --short HEAD)"
 BASE_VERSION="${FULL_VERSION%%.dev*}"          # setuptools_scm's guessed-next-version, before .devN
 CUDA_TAG="$(echo "${FULL_VERSION}" | grep -oE 'cu[0-9]+' | head -1)"
-TUNING_LABEL="$(gpu_tuned_tuning_label "${FULL_VERSION}")"
+# A wheel without a date label (a counter-era tuning.N build left in dist/, or one built
+# outside tuned/wheel.sh) is refused: the label is the release's identity, and the title and
+# tag must show the same string the wheel carries.
+DATE_LABEL="$(gpu_tuned_date_label "${FULL_VERSION}")"
+if [[ -z "${DATE_LABEL}" ]]; then
+    echo "ERROR: ${WHEEL_BASENAME} has no date label (<variant>.cu<cuda>.<YYYYMMDD>[.<seq>]) in its version '${FULL_VERSION}'." >&2
+    echo "  Rebuild it with 'bash tuned/wheel.sh ${GPU_TUNED_VARIANT}'; counter-era (tuning.N) wheels are not released." >&2
+    exit 1
+fi
 
 RELEASE_TAG="v${FULL_VERSION}"
-RELEASE_TITLE="vLLM ${BASE_VERSION} — ${GPU_TUNED_VARIANT} ${TUNING_LABEL:-(pre-tuning build)} (${CUDA_TAG}, ${GIT_SHA}) — ${GPU_TUNED_HW_LABEL}"
+RELEASE_TITLE="vLLM ${BASE_VERSION} — ${GPU_TUNED_VARIANT} ${DATE_LABEL} (${CUDA_TAG}, ${GIT_SHA}) — ${GPU_TUNED_HW_LABEL}"
 
 echo "===================================================="
 echo "vllm ${GPU_TUNED_HW_LABEL} Release"

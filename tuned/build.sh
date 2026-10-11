@@ -38,8 +38,12 @@ source "${GPU_TUNED_SELF_DIR}/devices/${GPU_TUNED_ARG_VARIANT}.conf"
 export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-${GPU_TUNED_TORCH_ARCH}}"
 
 if [[ "${GPU_TUNED_NEEDS_PREBUILT_DEPS}" == "true" ]]; then
-    # setup.py derives the tuning.<N> counter from main..HEAD; refuse a stale main.
-    gpu_tuned_check_main_current
+    # The date-form local version (gb10.cu<NNN>.<YYYYMMDD>) that setup.py appends via
+    # tuned/gb10_version.py. This is a dev build that is never published, so sequence 0
+    # and no tag lookup (GPU_TUNED_LABEL_SEQ=0); tuned/wheel.sh chooses the real one.
+    VLLM_GB10_LOCAL_VERSION="$(GPU_TUNED_LABEL_SEQ=0 gpu_tuned_build_local_version "${GPU_TUNED_VARIANT}" "${REPO_ROOT}")"
+    export VLLM_GB10_LOCAL_VERSION
+    echo "GB10 local version: ${VLLM_GB10_LOCAL_VERSION}"
     # GB10: torch and flash-attention are consumed as prebuilt wheels
     # (zbrad/pytorch and zbrad/flash-attention GB10 GitHub Releases) instead
     # of being compiled here:

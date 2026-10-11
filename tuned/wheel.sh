@@ -30,12 +30,16 @@ source "${GPU_TUNED_SELF_DIR}/devices/${GPU_TUNED_ARG_VARIANT}.conf"
 
 export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-${GPU_TUNED_TORCH_ARCH}}"
 
-# setup.py derives the tuning.<N> counter from main..HEAD; refuse a stale main
-# before anything is deleted or built.
 # shellcheck source=common.sh
 source "${GPU_TUNED_SELF_DIR}/common.sh"
 if [[ "${GPU_TUNED_NEEDS_PREBUILT_DEPS}" == "true" ]]; then
-    gpu_tuned_check_main_current
+    # The release's date-form local version (gb10.cu<NNN>.<YYYYMMDD>[.<seq>]) is chosen
+    # here, before anything is deleted or built, so an unreadable origin or a missing
+    # CUDA_HOME fails now and not after hours of compiling. The sequence is the lowest
+    # unused one among origin's tags; setup.py appends this via tuned/gb10_version.py.
+    VLLM_GB10_LOCAL_VERSION="$(gpu_tuned_build_local_version "${GPU_TUNED_VARIANT}" "${REPO_ROOT}")"
+    export VLLM_GB10_LOCAL_VERSION
+    echo "GB10 local version: ${VLLM_GB10_LOCAL_VERSION}"
 fi
 
 DIST_DIR="${REPO_ROOT}/dist/${GPU_TUNED_VARIANT}"

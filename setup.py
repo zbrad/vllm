@@ -1259,27 +1259,6 @@ def get_nvcc_cuda_version() -> Version:
     return nvcc_cuda_version
 
 
-def _gb10_tuning_commit_count() -> str | None:
-    """Commits on tuned-builds since it diverged from main (i.e. ahead of
-    upstream) -- the "tuning.N" marker every other tuned-builds repo's
-    tuned/wheel.sh now adds (zbrad/pytorch, zbrad/flash-attention-vllm,
-    zbrad/flash-attention): setuptools_scm's own dev-distance mixes
-    upstream-since-last-tag and our own commits together, so it can't say
-    on its own "how much of our tuned-builds work landed since an earlier
-    wheel was built." Returns None (marker omitted, not build-failing) if
-    git or the `main` ref isn't available -- this is cosmetic.
-    """
-    try:
-        return subprocess.check_output(
-            ["git", "rev-list", "--count", "main..HEAD"],
-            cwd=ROOT_DIR,
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-    except (subprocess.CalledProcessError, OSError):
-        return None
-
-
 def get_vllm_version() -> str:
     # Allow overriding the version. This is useful to build platform-specific
     # wheels (e.g. CPU, TPU) without modifying the source.
@@ -1308,33 +1287,20 @@ def get_vllm_version() -> str:
             ):
                 version += f"{sep}precompiled"
             else:
-                # Self-document GB10 native (non-JIT, single-arch) builds in the
-                # version string -- pip show/pip freeze otherwise can't
-                # distinguish this from a stock vllm install by name, since the
-                # package/import name is unconditionally "vllm". Computed before
-                # the cuda-version-suffix check below so the "gb10" marker isn't
-                # silently dropped on hosts where nvcc's version happens to match
-                # VLLM_MAIN_CUDA_VERSION exactly.
+                # Fork-local (zbrad/vllm tuned-builds): a GB10 build's whole suffix
+                # (gb10.cu<NNN>.<YYYYMMDD>[.<seq>]) comes from tuned/gb10_version.py.
                 gb10_build = bool(os.environ.get("VLLM_GB10_BUILD"))
-                tuning_count = _gb10_tuning_commit_count() if gb10_build else None
                 cuda_version = str(get_nvcc_cuda_version())
-                if cuda_version != envs.VLLM_MAIN_CUDA_VERSION:
+                if gb10_build and "sdist" not in sys.argv:
+                    gb10 = load_module_from_path(
+                        "gb10_version", os.path.join(ROOT_DIR, "tuned", "gb10_version.py")
+                    )
+                    version += f"{sep}{gb10.Gb10Version.local_suffix(cuda_version)}"
+                elif cuda_version != envs.VLLM_MAIN_CUDA_VERSION:
                     cuda_version_str = cuda_version.replace(".", "")[:3]
                     # skip this for source tarball, required for pypi
                     if "sdist" not in sys.argv:
-                        tag = (
-                            f"gb10.cu{cuda_version_str}"
-                            if gb10_build
-                            else f"cu{cuda_version_str}"
-                        )
-                        if gb10_build and tuning_count is not None:
-                            tag += f".tuning.{tuning_count}"
-                        version += f"{sep}{tag}"
-                elif gb10_build and "sdist" not in sys.argv:
-                    tag = "gb10"
-                    if tuning_count is not None:
-                        tag += f".tuning.{tuning_count}"
-                    version += f"{sep}{tag}"
+                        version += f"{sep}cu{cuda_version_str}"
         elif _is_hip():
             # Get the Rocm Version
             rocm_version = get_rocm_version() or torch.version.hip
