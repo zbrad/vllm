@@ -96,6 +96,13 @@ export VLLM_FLASH_ATTN_NO_PTX="${VLLM_FLASH_ATTN_NO_PTX-1}"
 # (16, 16, 16) isn't one of them ("No valid MLA prefill backend found").
 # Same failure shape as the NemotronH mamba_head_dim=80 limitation above --
 # see mla-dims-too-small below. Confirmed 2026-09-12.
+# GPU memory share vLLM may claim, as a fraction of the machine. The GB10 has ONE 121 GiB pool shared by the GPU, the OS
+# and every other process (unified memory), and vLLM pre-allocates its KV cache to fill the share. The old 0.85 made it
+# allocate a 95 GiB KV cache for a 4B model with a 512-token context, which exhausted the pool: the driver reported
+# NV_ERR_NO_MEMORY, nvidia-smi hung, and the node's gb10-health-gate rebooted the machine (2026-10-19, mid-test). These
+# stand-ins need weights (the NVFP4 30B MoE is the largest, about 18 GiB) plus a few GiB; 0.30 is about 36 GiB.
+ACCEPT_GPU_MEM_UTIL="${ACCEPT_GPU_MEM_UTIL:-0.30}"
+
 MODELS=(
   "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16::::NemotronH (dense, stand-in for Nemotron-3-Super-120B)"
   "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4::flashinfer::NemotronH (NVFP4 MoE, mamba_head_dim=64, stand-in for Nemotron-3-Super-120B's AOT-scoped MoE+SSU path)"
@@ -171,7 +178,7 @@ if '${mamba_backend}':
 
 llm = LLM(
     model='${model_id}',
-    gpu_memory_utilization=0.85,
+    gpu_memory_utilization=${ACCEPT_GPU_MEM_UTIL},
     max_model_len=512,
     trust_remote_code=False,
     kv_cache_dtype='${kv_cache_dtype:-auto}',
