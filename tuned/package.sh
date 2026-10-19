@@ -98,8 +98,11 @@ for so in "${STAMP_LIBS[@]}"; do
     [[ -f "${so}" ]] || { echo "ERROR: ${so#"${UNPACK_DIR}"/} not found inside ${BUILT_NAME}." >&2; exit 1; }
     gpu_tuned_so_has_device_code "${so}" || { echo "ERROR: ${so#"${UNPACK_DIR}"/} has no device code: the stamp would not describe a GPU build." >&2; exit 1; }
     gpu_tuned_verify_arch "${so}" "${GPU_TUNED_TORCH_ARCH}" || exit 1
-    # Pre-compiled only: PTX would be JIT-compiled by the driver at first use. (|| true: grep finds nothing when the check passes.)
-    PTX_FOUND="$(cuobjdump --list-ptx "${so}" 2>/dev/null | grep -oE 'sm_[0-9]+[a-z]?' | sort -u | tr '\n' ' ' || true)"
+    # Pre-compiled only: PTX would be JIT-compiled by the driver at first use. A cuobjdump that cannot run or read the file
+    # is a failure, not "no PTX" (H4): it exits 0 for a built extension with no PTX and non-zero otherwise.
+    PTX_OUT="$(cuobjdump --list-ptx "${so}" 2>&1)" \
+        || { echo "ERROR: cuobjdump --list-ptx failed on ${so#"${UNPACK_DIR}"/}; the PTX check cannot run: ${PTX_OUT}" >&2; exit 1; }
+    PTX_FOUND="$(printf '%s\n' "${PTX_OUT}" | grep -oE 'sm_[0-9]+[a-z]?' | sort -u | tr '\n' ' ' || true)"
     if [[ -n "${PTX_FOUND// /}" ]]; then
         echo "ERROR: ${so#"${UNPACK_DIR}"/} embeds PTX (${PTX_FOUND}): the driver would JIT-compile it at runtime." >&2
         exit 1
