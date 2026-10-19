@@ -92,7 +92,7 @@ PY
 
     # Mapped libraries: a process that imports the extension maps the venv's libtorch/libc10, from one file each.
     maps="$(cd "${WORK}" && "${PY}" -I -c '
-import collections, os, sys
+import collections, hashlib, os, sys
 import torch
 import vllm._C_stable_libtorch
 torch.zeros(1, device="cuda")
@@ -101,11 +101,17 @@ for line in open("/proc/self/maps"):
     p = line.split()[-1] if line.split() else ""
     if ".so" in p and p.startswith("/"):
         by[os.path.basename(p).split(".so")[0]].add(os.path.realpath(p))
-bad = [f"{k}: {sorted(v)}" for k, v in by.items() if len(v) > 1 and ".cpython-" not in k]  # Python extension modules may share a file name across packages
+# A name mapped from two files is a failure unless the files are byte-identical (the pip nvidia-cuda-runtime wheel and the
+# toolkit ship the same libcudart; cuda-bindings loads one, torch the other). Python extension modules may share a file
+# name across packages.
+def digest(path):
+    return hashlib.sha256(open(path, "rb").read()).hexdigest()
+bad = [f"{k}: {sorted(v)}" for k, v in by.items() if len(v) > 1 and ".cpython-" not in k and len({digest(x) for x in v}) > 1]
 bad += [f"{k} from {sorted(v)}" for k, v in by.items() if k.startswith(("libtorch", "libc10", "_C_stable")) and not all(x.startswith(sys.prefix) for x in v)]
-print("\n".join(bad) if bad else "clean")
+same = [k for k, v in by.items() if len(v) > 1 and ".cpython-" not in k and len({digest(x) for x in v}) == 1]
+print("\n".join(bad) if bad else "clean" + (" (byte-identical copies of: " + ", ".join(sorted(same)) + ")" if same else ""))
 ' 2>&1 | tail -5)"
-    [[ "${maps}" == clean ]] && ok "every mapped libtorch/libc10/_C_stable library is the venv's, and no library name maps from two files" \
+    [[ "${maps}" == clean* ]] && ok "every mapped libtorch/libc10/_C_stable library is the venv's, and no library name maps from two different files ${maps#clean}" \
         || fail "library identity: ${maps}"
     gpu_tuned_verify_toolkit_libs "${SITE_DIR}/vllm/_C_stable_libtorch.abi3.so" && ok "toolkit libraries resolve under ${CUDA_HOME}" \
         || fail "toolkit libraries do not resolve under ${CUDA_HOME}"
