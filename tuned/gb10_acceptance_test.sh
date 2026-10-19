@@ -19,6 +19,9 @@
 
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# The toolkit venv's python (tuned/full_test.sh passes it). -I below keeps the repo root, the cwd, off sys.path,
+# so `from vllm import` loads the installed wheel and not the source tree.
+: "${TUNED_PYTHON:?TUNED_PYTHON must name the toolkit venv python (tuned/full_test.sh sets it)}"
 
 # flashinfer checks this env var truthily (flashinfer/jit/core.py) -- only
 # "unset vs set" matters, not the value. Leaving FLASHINFER_DISABLE_JIT
@@ -159,7 +162,7 @@ for entry in "${MODELS[@]}"; do
     "kv_cache_dtype=${kv_cache_dtype:-auto} mamba_backend=${mamba_backend:-triton}"
   echo "=========================================="
 
-  if .venv/bin/python -c "
+  if "${TUNED_PYTHON}" -I -c "
 from vllm import LLM, SamplingParams
 
 kwargs = {}
