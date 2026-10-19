@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 #
-# tuned/release.sh <variant> — publish an already-built (tuned/wheel.sh
-# <variant>) vllm wheel as a real GitHub release, matching
-# zbrad/raft's/zbrad/cuvs's/zbrad/faiss's/zbrad/flashinfer's tuned/
-# publish conventions (v<version>-<variant>-<cuda_tag> tag, --target
-# tuned-builds). vllm previously only did an editable install -- no
-# wheel, no publish step -- of everything in this repo set, it was the
-# only true leaf with no artifact at all.
+# tuned/release.sh <variant> — check an already-built (tuned/wheel.sh
+# <variant>) vllm wheel and, if it is there, write the ready-marker that
+# tuned/publish.sh <variant> publishes as a GitHub release (tag shape
+# matches zbrad/raft's/zbrad/cuvs's/zbrad/faiss's/zbrad/flashinfer's
+# tuned/ publish conventions: v<version>-<variant>-<cuda_tag>, --target
+# tuned-builds). It never publishes. vllm previously only did an editable
+# install -- no wheel, no publish step -- of everything in this repo set,
+# it was the only true leaf with no artifact at all.
 #
 # vllm's own version is setuptools_scm-derived (git-describe style, e.g.
 # 8.4.dev7+g2b9dcbd29.gb10.cu133) rather than a plain x.y.z like
@@ -20,7 +21,8 @@
 #
 # Usage:
 #   bash tuned/wheel.sh gb10       # first, produces dist/gb10/*.whl
-#   bash tuned/release.sh gb10     # then, publish it
+#   bash tuned/release.sh gb10     # then, check it and write the ready-marker
+#   bash tuned/publish.sh gb10     # then, publish it
 set -euo pipefail
 
 GPU_TUNED_ARG_VARIANT="$1"
@@ -34,6 +36,8 @@ source "${GPU_TUNED_SELF_DIR}/devices/${GPU_TUNED_ARG_VARIANT}.conf"
 source "${GPU_TUNED_SELF_DIR}/common.sh"
 
 DIST_DIR="${REPO_ROOT}/dist/${GPU_TUNED_VARIANT}"
+MARKER="${DIST_DIR}/RELEASE_READY_${GPU_TUNED_VARIANT}"
+gpu_tuned_release_marker_clear "${MARKER}"
 WHEEL_FILE="$(find "${DIST_DIR}" -maxdepth 1 -name '*.whl' | head -1)"
 if [[ -z "${WHEEL_FILE}" ]]; then
     echo "ERROR: no wheel found in ${DIST_DIR}." >&2
@@ -78,11 +82,12 @@ echo "===================================================="
 echo "  Wheel   : ${WHEEL_BASENAME}"
 echo "  Version : ${FULL_VERSION}"
 echo ""
-echo "Publishing to GitHub release ${RELEASE_TAG}..."
-gpu_tuned_publish_release "zbrad/vllm" "${RELEASE_TAG}" "${RELEASE_TITLE}" \
-    "vllm ${FULL_VERSION} wheel for ${GPU_TUNED_HW_LABEL}, single-arch (TORCH_CUDA_ARCH_LIST=${GPU_TUNED_TORCH_ARCH}). Depends on zbrad/pytorch's and zbrad/flash-attention's matching gb10 releases (see requirements/gb10.txt and tuned/devices/${GPU_TUNED_VARIANT}.conf)." \
-    "${WHEEL_FILE}#${WHEEL_BASENAME}"
+# Release notes are passed to gpu_tuned_release_ready as a file (its marker records the file's sha256).
+NOTES_FILE="${DIST_DIR}/RELEASE_NOTES.md"
+printf '%s\n' "vllm ${FULL_VERSION} wheel for ${GPU_TUNED_HW_LABEL}, single-arch (TORCH_CUDA_ARCH_LIST=${GPU_TUNED_TORCH_ARCH}). Depends on zbrad/pytorch's and zbrad/flash-attention's matching gb10 releases (see requirements/gb10.txt and tuned/devices/${GPU_TUNED_VARIANT}.conf)." > "${NOTES_FILE}"
 
-echo ""
-echo "Release: https://github.com/zbrad/vllm/releases/tag/${RELEASE_TAG}"
+echo "Recording ready-marker for GitHub release ${RELEASE_TAG} (publish with tuned/publish.sh ${GPU_TUNED_VARIANT})..."
+gpu_tuned_release_ready "${MARKER}" "zbrad/vllm" "${RELEASE_TAG}" "${RELEASE_TITLE}" \
+    "${NOTES_FILE}" "${WHEEL_FILE}#${WHEEL_BASENAME}"
+
 echo "Done."
