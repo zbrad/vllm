@@ -893,7 +893,12 @@ if(VLLM_GPU_LANG STREQUAL "CUDA" OR VLLM_GPU_LANG STREQUAL "HIP")
   cuda_archs_loose_intersection(SCALED_MM_2X_ARCHS
     "7.5;8.0;8.7;8.9+PTX" "${CUDA_ARCHS}")
   # subtract out the archs that are already built for 3x
-  list(REMOVE_ITEM SCALED_MM_2X_ARCHS ${SCALED_MM_3X_ARCHS})
+  # zbrad/vllm tuned-builds (VLLM_TUNED_NATIVE_ONLY): keep c2x for the 3x archs too. The azp (int8 zero-point) scaled_mm
+  # path has no 3x kernel on SM12x and dispatches to c2x; upstream gets it from the 8.9+PTX entry (JIT), here it is
+  # built natively for the target.
+  if (NOT DEFINED ENV{VLLM_TUNED_NATIVE_ONLY})
+    list(REMOVE_ITEM SCALED_MM_2X_ARCHS ${SCALED_MM_3X_ARCHS})
+  endif()
   if (SCALED_MM_2X_ARCHS)
     set(SCALED_MM_C2X_SRCS "csrc/quantization/w8a8/cutlass/scaled_mm_c2x.cu")
     set_gencode_flags_for_srcs(

@@ -102,6 +102,10 @@ export CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-60G}"
 # setup.py's FetchContent downloads default to the repo's .deps/, shared by every toolkit and the dev build.
 export FETCHCONTENT_BASE_DIR="${GPU_TUNED_BUILD_ROOT}/deps"
 
+# --- Pre-compiled only: cmake/utils.cmake and CMakeLists.txt (zbrad/vllm tuned-builds edits) build +PTX kernels natively for
+#     the target arch instead of as lower-arch SASS plus PTX that the driver JIT-compiles on first use. ---
+export VLLM_TUNED_NATIVE_ONLY=1
+
 # --- Build parallelism: gpu_tuned_jobs unless MAX_JOBS is set (C5). NVCC_THREADS=1 keeps MAX_JOBS
 #     as the real number of compile jobs (setup.py divides MAX_JOBS by NVCC_THREADS). ---
 export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-${GPU_TUNED_TORCH_ARCH}}"

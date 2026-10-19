@@ -515,7 +515,16 @@ function(cuda_archs_loose_intersection OUT_CUDA_ARCHS SRC_CUDA_ARCHS TGT_CUDA_AR
       string(REGEX REPLACE "^([0-9]+)\\..*$" "\\1" SRC_ARCH_MAJOR "${_SRC_ARCH}")
       # Check version-less-or-equal, and allow PTX arches to match across majors
       if (_SRC_ARCH VERSION_LESS_EQUAL _ARCH)
-        if (_SRC_ARCH IN_LIST _PTX_ARCHS OR SRC_ARCH_MAJOR STREQUAL TGT_ARCH_MAJOR)
+        if (DEFINED ENV{VLLM_TUNED_NATIVE_ONLY})
+          # zbrad/vllm tuned-builds: native-only. A +PTX source entry that would match across majors (8.0+PTX for a
+          # 12.1a target) builds the same sources natively for the target arch instead of sm_80 SASS plus PTX that the
+          # driver would JIT-compile at load. No PTX is emitted (see the +PTX reapply below).
+          if (SRC_ARCH_MAJOR STREQUAL TGT_ARCH_MAJOR)
+            set(_TMP_ARCH "${_SRC_ARCH}")
+          elseif (_SRC_ARCH IN_LIST _PTX_ARCHS)
+            set(_TMP_ARCH "${_ARCH}")
+          endif()
+        elseif (_SRC_ARCH IN_LIST _PTX_ARCHS OR SRC_ARCH_MAJOR STREQUAL TGT_ARCH_MAJOR)
           set(_TMP_ARCH "${_SRC_ARCH}")
         endif()
       else()
@@ -535,7 +544,7 @@ function(cuda_archs_loose_intersection OUT_CUDA_ARCHS SRC_CUDA_ARCHS TGT_CUDA_AR
   # reapply +PTX suffix to architectures that requested PTX
   set(_FINAL_ARCHS)
   foreach(_arch ${_CUDA_ARCHS})
-    if(_arch IN_LIST _PTX_ARCHS)
+    if(_arch IN_LIST _PTX_ARCHS AND NOT DEFINED ENV{VLLM_TUNED_NATIVE_ONLY})
       list(APPEND _FINAL_ARCHS "${_arch}+PTX")
     else()
       list(APPEND _FINAL_ARCHS "${_arch}")
