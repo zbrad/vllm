@@ -24,11 +24,11 @@ logger = logging.getLogger(__name__)
 ENV_BUILD = "VLLM_GB10_BUILD"
 ENV_LOCAL_VERSION = "VLLM_GB10_LOCAL_VERSION"
 
-# <variant>.cu<cuda>.<YYYYMMDD>[.<seq>]; a ".0" sequence and a zero-led date are not
-# canonical (PEP 440 rewrites or reorders them), so they are not accepted.
+# <variant>.cu<cuda>.<YYYYMMDD>[.<seq>], the sequence always written (".0" for the first build of a
+# date, docs/ARCHITECTURE.md E1); a zero-led date or sequence is not canonical (PEP 440 rewrites it).
 LABEL_RE = re.compile(
     r"^(?P<variant>[a-z][a-z0-9]*)\.cu(?P<cuda>[0-9]+)"
-    r"\.(?P<date>[1-9][0-9]{7})(?:\.(?P<seq>[1-9][0-9]*))?$"
+    r"\.(?P<date>[1-9][0-9]{7})(?:\.(?P<seq>0|[1-9][0-9]*))?$"
 )
 
 

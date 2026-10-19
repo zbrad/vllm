@@ -24,6 +24,11 @@ def test_local_suffix_returns_a_valid_label(env: dict[str, str]) -> None:
     assert Gb10Version.local_suffix("13.4", env) == "gb10.cu134.20261011"
 
 
+def test_local_suffix_accepts_the_first_build_sequence_zero() -> None:
+    env = {ENV_LOCAL_VERSION: "gb10.cu134.20261011.0"}
+    assert Gb10Version.local_suffix("13.4", env) == "gb10.cu134.20261011.0"
+
+
 def test_local_suffix_accepts_a_sequence_suffix() -> None:
     env = {ENV_LOCAL_VERSION: "gb10.cu134.20261011.2"}
     assert Gb10Version.local_suffix("13.4", env) == "gb10.cu134.20261011.2"
@@ -53,7 +58,7 @@ def test_local_suffix_empty_variable_raises() -> None:
         "gb10.cu134.tuning.62",  # the old counter shape
         "gb10.20261011",  # no cuda segment
         "GB10.cu134.20261011",  # uppercase variant
-        "gb10.cu134.20261011.0",  # .0 is not a canonical sequence
+        "gb10.cu134.20261011.00",  # a zero-led sequence is not canonical
         "gb10.cu134.20261011.01",
         "gb10.cu134.02061011",  # zero-led date
         "gb10.cu134.2026101",  # seven digits
@@ -87,14 +92,18 @@ def test_local_suffix_truncated_cuda_tag_is_refused_for_two_digit_minor() -> Non
         Gb10Version.local_suffix("13.10", env)
 
 
-def test_local_suffix_agrees_with_the_shell_builder() -> None:
-    """tuned-common's gpu_tuned_local_version_dated builds it; this accepts it."""
+@pytest.mark.parametrize(
+    ("seq", "expected"),
+    [("0", "gb10.cu134.20261011.0"), ("3", "gb10.cu134.20261011.3")],
+)
+def test_local_suffix_agrees_with_the_shell_builder(seq: str, expected: str) -> None:
+    """tuned-common's gpu_tuned_local_version_dated builds it (sequence 0 included); this accepts it."""
     script = (
         f"source '{REPO_ROOT}/tuned/common.sh'; "
-        "gpu_tuned_local_version_dated gb10 134 20261011 3"
+        f"gpu_tuned_local_version_dated gb10 134 20261011 {seq}"
     )
     built = subprocess.run(
         ["bash", "-c", script], capture_output=True, text=True, check=True
     ).stdout.strip()
-    assert built == "gb10.cu134.20261011.3"
+    assert built == expected
     assert Gb10Version.local_suffix("13.4", {ENV_LOCAL_VERSION: built}) == built
