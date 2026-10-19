@@ -61,9 +61,12 @@ export CUDA_VISIBLE_DEVICES="${GPU_TUNED_TEST_GPUS:-0}"
 TESTDIR="$(mktemp -d)"
 trap 'rm -rf "${TESTDIR}"' EXIT
 
+echo "installing the test tooling (tuned/requirements-test.txt) into the build venv"
+"${PY}" -m pip install --quiet -r tuned/requirements-test.txt \
+    || { echo "ERROR: pip could not install the test tooling." >&2; exit 1; }
 echo "installing $(basename "${WHEEL}") into the build venv (--no-deps)"
-"${PY}" -m pip install --quiet --no-deps --force-reinstall "${WHEEL}" -r tuned/requirements-test.txt \
-    || { echo "ERROR: pip could not install the wheel and the test tooling." >&2; exit 1; }
+"${PY}" -m pip install --quiet --no-deps --force-reinstall "${WHEEL}" \
+    || { echo "ERROR: pip could not install the wheel." >&2; exit 1; }
 
 # Where the wheel's compiled extensions load from, and the device-code checks, from an empty directory.
 SITE_DIR="$(cd "${TESTDIR}" && "${PY}" -I -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
