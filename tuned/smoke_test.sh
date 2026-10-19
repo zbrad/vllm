@@ -101,7 +101,7 @@ for line in open("/proc/self/maps"):
     p = line.split()[-1] if line.split() else ""
     if ".so" in p and p.startswith("/"):
         by[os.path.basename(p).split(".so")[0]].add(os.path.realpath(p))
-bad = [f"{k}: {sorted(v)}" for k, v in by.items() if len(v) > 1]
+bad = [f"{k}: {sorted(v)}" for k, v in by.items() if len(v) > 1 and ".cpython-" not in k]  # Python extension modules may share a file name across packages
 bad += [f"{k} from {sorted(v)}" for k, v in by.items() if k.startswith(("libtorch", "libc10", "_C_stable")) and not all(x.startswith(sys.prefix) for x in v)]
 print("\n".join(bad) if bad else "clean")
 ' 2>&1 | tail -5)"
@@ -123,7 +123,7 @@ import pytest
 raise SystemExit(pytest.main(sys.argv[2:]))
 ' "${REPODIR}" --import-mode=importlib -q -p no:cacheprovider "${REPODIR}/tests/${node}" 2>&1)"; rc=$?
         printf '%s\n' "${out}" | tail -4 | sed 's/^/  | /'
-        passed="$(printf '%s\n' "${out}" | sed -n 's/.*[ =]\([0-9][0-9]*\) passed.*/\1/p' | tail -1)"
+        passed="$(printf '%s\n' "${out}" | grep -oE '[0-9]+ passed' | tail -1 | grep -oE '[0-9]+' || true)"
         if [[ ${rc} -eq 0 && "${passed:-0}" -gt 0 ]] && ! printf '%s\n' "${out}" | grep -qE '[0-9]+ (failed|error)'; then
             ok "tests/${node}: ${passed} passed"
         else
