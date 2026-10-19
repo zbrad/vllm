@@ -5,7 +5,7 @@ Fork-local (zbrad/vllm, tuned-builds). Called from one short call site in
 of ``setup.py`` do not collide with it.
 
 The suffix itself is built by tuned-common's ``gpu_tuned_local_version_dated`` in
-``tuned/build.sh`` and ``tuned/wheel.sh``, and handed over in the
+``tuned/wheel.sh`` (the only place a label is allocated), and handed over in the
 ``VLLM_GB10_LOCAL_VERSION`` environment variable. This module only receives it and
 checks it, so the label has exactly one author (see ``tuned/common.sh`` and
 ``docs/VERSIONING.md`` in zbrad/tuned-common). It replaces the earlier

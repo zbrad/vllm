@@ -1376,15 +1376,21 @@ def get_vllm_version() -> str:
             ):
                 version += f"{sep}precompiled"
             else:
-                # Fork-local (zbrad/vllm tuned-builds): a GB10 build's whole suffix
-                # (gb10.cu<NNN>.<YYYYMMDD>[.<seq>]) comes from tuned/gb10_version.py.
-                gb10_build = bool(os.environ.get("VLLM_GB10_BUILD"))
+                # Fork-local (zbrad/vllm tuned-builds): a tuned build's whole local version
+                # (<variant>.cu<NNN>.<YYYYMMDD>[.<seq>]) comes from tuned/gb10_version.py. It
+                # replaces setuptools_scm's local part (+g<sha>, .d<date>): the date label is the
+                # identity, and the commit is recorded in the build info (fork.commit).
+                tuned_build = bool(
+                    os.environ.get("VLLM_GB10_BUILD")
+                    or os.environ.get("VLLM_GB10_LOCAL_VERSION")
+                )
                 cuda_version = str(get_nvcc_cuda_version())
-                if gb10_build and "sdist" not in sys.argv:
+                if tuned_build and "sdist" not in sys.argv:
                     gb10 = load_module_from_path(
                         "gb10_version", os.path.join(ROOT_DIR, "tuned", "gb10_version.py")
                     )
-                    version += f"{sep}{gb10.Gb10Version.local_suffix(cuda_version)}"
+                    version = version.split("+", 1)[0]
+                    version += f"+{gb10.Gb10Version.local_suffix(cuda_version)}"
                 elif cuda_version != envs.VLLM_MAIN_CUDA_VERSION:
                     cuda_version_str = cuda_version.replace(".", "")[:3]
                     # skip this for source tarball, required for pypi

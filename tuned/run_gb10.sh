@@ -47,7 +47,15 @@ export VLLM_FLASH_ATTN_NO_PTX="${VLLM_FLASH_ATTN_NO_PTX-1}"
 # torch/flashinfer combination has a known fp4-quantization arch-coverage
 # gap (torch built against CUDA>=12.9 redirects to a "120f" module this
 # AOT cache doesn't have -- see the script's own docstring).
+# The vllm that runs is the one the tuned build venv holds for the toolkit named by CUDA_TAG (no default:
+# tuned/env.sh names it). The venv is not the user site, so a stock vllm on PATH is never picked up.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-python3 "${SCRIPT_DIR}/verify_fp4_arch_match.py" 121
+# shellcheck source=env.sh
+source "${SCRIPT_DIR}/env.sh" gb10
+[[ -x "${GPU_TUNED_VENV_DIR}/bin/vllm" ]] || {
+    echo "ERROR: no vllm in ${GPU_TUNED_VENV_DIR}/bin. Run CUDA_TAG=${CUDA_TAG} bash tuned/build.sh gb10 and tuned/full_test.sh gb10 first." >&2
+    exit 1
+}
+"${GPU_TUNED_VENV_DIR}/bin/python" "${SCRIPT_DIR}/verify_fp4_arch_match.py" 121
 
-exec vllm "$@"
+exec "${GPU_TUNED_VENV_DIR}/bin/vllm" "$@"

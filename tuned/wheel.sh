@@ -1,73 +1,79 @@
-#!/usr/bin/env bash
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+#!/bin/bash
+# tuned/wheel.sh <variant> — make the unstamped vllm wheel for one GPU variant and one CUDA toolkit,
+# into tuned/build/<cuda-tag>/wheel/, and record the release label and the build commit. This is the
+# wheel step of tuned/build.sh, which installs the toolkit's build venv first; it refuses to run without
+# that venv. It never publishes, tests or packages (package.sh stamps a copy, H3).
 #
-# tuned/wheel.sh <variant> — build a real, installable vllm wheel for a
-# single GPU variant (gb10/rtx40/rtx50), instead of tuned/build.sh's
-# editable (`pip install -e .`) install. Run tuned/build.sh <variant> at
-# least once first (or just let this script's own dependency-install steps
-# run) -- this reuses the same env vars (TORCH_CUDA_ARCH_LIST, MAX_JOBS,
-# NVCC_THREADS, VLLM_FLASH_ATTN_PREBUILT_PKG, VLLM_GB10_BUILD) so a variant
-# built via tuned/build.sh doesn't get silently rebuilt against different
-# settings here.
+#   CUDA_TAG=cu134 bash tuned/wheel.sh gb10     (normally run by tuned/build.sh)
 #
-# vllm's setup.py has no persisted incremental build_temp/ directory across
-# invocations (confirmed empirically: no build/temp.* survives a prior
-# tuned/build.sh run) -- so this is a real CUDA recompile, same cost as
-# tuned/build.sh itself, not a quick repackage of already-built objects.
-#
-# Usage:
-#   bash tuned/wheel.sh gb10
+# The release label (E3/E4) is allocated here, once: HEAD's UTC commit date and the lowest unused sequence
+# among origin's tags. setup.py puts it in the wheel's local version through VLLM_GB10_LOCAL_VERSION.
+# release-label and build-commit are written last, so their presence means the build finished.
+# The CMake build directory is GPU_TUNED_CMAKE_DIR: setuptools' build --build-base moves build_temp and
+# build_lib under it, so the repo's everyday build/ is not written (C6, C1).
 set -euo pipefail
 
-GPU_TUNED_ARG_VARIANT="$1"
+GPU_TUNED_ARG_VARIANT="${1:?usage: tuned/wheel.sh <variant>}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "${REPO_ROOT}"
 
-GPU_TUNED_SELF_DIR="${REPO_ROOT}/tuned"
-# shellcheck source=devices/rtx50.conf
-source "${GPU_TUNED_SELF_DIR}/devices/${GPU_TUNED_ARG_VARIANT}.conf"
+# shellcheck source=env.sh
+source "${REPO_ROOT}/tuned/env.sh" "${GPU_TUNED_ARG_VARIANT}"
 
-export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-${GPU_TUNED_TORCH_ARCH}}"
+[[ -d "${GPU_TUNED_VENV_DIR}" ]] || {
+    echo "ERROR: ${GPU_TUNED_VENV_DIR} not found. Run CUDA_TAG=${CUDA_TAG} bash tuned/build.sh ${GPU_TUNED_VARIANT} (it installs the build venv, then calls this script)." >&2
+    exit 1
+}
+gpu_tuned_verify_venv "${GPU_TUNED_VENV_DIR}" "${REPO_ROOT}"
+# shellcheck source=/dev/null
+source "${GPU_TUNED_VENV_DIR}/bin/activate"
 
-# shellcheck source=common.sh
-source "${GPU_TUNED_SELF_DIR}/common.sh"
-if [[ "${GPU_TUNED_NEEDS_PREBUILT_DEPS}" == "true" ]]; then
-    # The release's date-form local version (gb10.cu<NNN>.<YYYYMMDD>[.<seq>]) is chosen
-    # here, before anything is deleted or built, so an unreadable origin or a missing
-    # CUDA_HOME fails now and not after hours of compiling. The sequence is the lowest
-    # unused one among origin's tags; setup.py appends this via tuned/gb10_version.py.
-    VLLM_GB10_LOCAL_VERSION="$(gpu_tuned_build_local_version "${GPU_TUNED_VARIANT}" "${REPO_ROOT}")"
-    export VLLM_GB10_LOCAL_VERSION
-    echo "GB10 local version: ${VLLM_GB10_LOCAL_VERSION}"
-fi
+LOCAL_VERSION="$(gpu_tuned_build_local_version "${GPU_TUNED_VARIANT}" "${REPO_ROOT}")" || exit 1
+[[ "${LOCAL_VERSION}" == *".cu${CUDA_VERSION_COMPACT}."* ]] || {
+    echo "ERROR: label ${LOCAL_VERSION} disagrees with ${CUDA_TAG} (from ${CUDA_HOME}); nvcc and the toolkit definition must report the same release." >&2
+    exit 1
+}
+LABEL="${LOCAL_VERSION#*.cu${CUDA_VERSION_COMPACT}.}"
+export VLLM_GB10_LOCAL_VERSION="${LOCAL_VERSION}"
+echo "Release label: ${LABEL} (local version ${LOCAL_VERSION})"
 
-DIST_DIR="${REPO_ROOT}/dist/${GPU_TUNED_VARIANT}"
-rm -rf "${DIST_DIR}"
-mkdir -p "${DIST_DIR}"
+# Remove the previous build's markers first: they are rewritten only if this build succeeds.
+rm -f "${GPU_TUNED_BUILD_ROOT}/build-commit" "${GPU_TUNED_BUILD_ROOT}/release-label"
+mkdir -p "${GPU_TUNED_WHEEL_DIR}" "${GPU_TUNED_CMAKE_DIR}"
+rm -f "${GPU_TUNED_WHEEL_DIR}"/vllm-*.whl
 
-if [[ "${GPU_TUNED_NEEDS_PREBUILT_DEPS}" == "true" ]]; then
-    # Same rationale as tuned/build.sh's own branch -- see its comments.
-    export MAX_JOBS="${MAX_JOBS:-3}"
-    export NVCC_THREADS="${NVCC_THREADS:-1}"
-    export VLLM_FLASH_ATTN_PREBUILT_PKG=1
-    export VLLM_GB10_BUILD=1
+echo "=========================================="
+echo "Building vllm wheel for ${GPU_TUNED_HW_LABEL}"
+echo "=========================================="
+echo "TORCH_CUDA_ARCH_LIST: ${TORCH_CUDA_ARCH_LIST}"
+echo "CUDA_HOME:            ${CUDA_HOME}"
+echo "MAX_JOBS:             ${MAX_JOBS} (NVCC_THREADS=${NVCC_THREADS})"
+echo "CMake build tree:     ${GPU_TUNED_CMAKE_DIR}"
+echo "Python:               $(python3 --version)"
+echo "Git commit:           $(git rev-parse --short HEAD)"
 
-    echo "Installing build-time dependencies (cmake, ninja, setuptools-rust, ...)"
-    grep -v '^torch' requirements/build/cuda.txt | pip install -r /dev/stdin
-    echo "Installing GB10 requirements (torch @ URL, flashinfer, etc.)"
-    pip install -r requirements/gb10.txt
-    echo "Installing prebuilt vllm_flash_attn wheel (native sm_121, no PTX, no FA3)"
-    pip install --no-deps "${GPU_TUNED_FLASH_ATTN_WHEEL_URL}"
-else
-    echo "Installing build-time dependencies (cmake, ninja, setuptools-rust, ...)"
-    pip install -r requirements/build/cuda.txt
-fi
+# The unstamped wheel: built through setuptools' PEP 517 backend with --build-base pointed at the toolkit's
+# cmake/ tree. --no-isolation: the build venv already holds the build requirements (build.sh installs them).
+python3 -m build --wheel --no-isolation --outdir "${GPU_TUNED_WHEEL_DIR}" \
+    --config-setting="--build-option=build --build-base=${GPU_TUNED_CMAKE_DIR}"
 
-echo "Building vllm wheel for TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}"
-pip wheel --no-build-isolation --no-deps -w "${DIST_DIR}" .
+WHEEL="$(ls "${GPU_TUNED_WHEEL_DIR}"/vllm-*.whl 2>/dev/null | head -1)"
+[[ -n "${WHEEL}" ]] || { echo "ERROR: no wheel found in ${GPU_TUNED_WHEEL_DIR}" >&2; exit 1; }
+VERSION="$(gpu_tuned_wheel_version "${WHEEL}" vllm)" || exit 1
+[[ "${VERSION}" == *"+${GPU_TUNED_VARIANT}.cu${CUDA_VERSION_COMPACT}.${LABEL}" ]] || {
+    echo "ERROR: $(basename "${WHEEL}") is version ${VERSION}, not carrying +${GPU_TUNED_VARIANT}.cu${CUDA_VERSION_COMPACT}.${LABEL} from the release label." >&2
+    exit 1
+}
+gpu_tuned_check_wheel_label "${WHEEL}"
+echo "Built wheel: $(basename "${WHEEL}") ($(du -sh "${WHEEL}" | awk '{print $1}'))"
 
-WHEEL_FILE="$(find "${DIST_DIR}" -maxdepth 1 -name '*.whl' | head -1)"
-[[ -z "${WHEEL_FILE}" ]] && { echo "ERROR: no wheel produced in ${DIST_DIR}." >&2; exit 1; }
+# build-commit: the source the wheel was made from. A dirty tree is recorded as such and package.sh refuses it.
+BUILD_COMMIT="$(git rev-parse HEAD)"
+[[ -z "$(git status --porcelain --untracked-files=no)" ]] || BUILD_COMMIT="${BUILD_COMMIT}-dirty"
+printf '%s\n' "${LABEL}" > "${GPU_TUNED_BUILD_ROOT}/release-label"
+printf '%s\n' "${BUILD_COMMIT}" > "${GPU_TUNED_BUILD_ROOT}/build-commit"
+
 echo ""
-echo "Built: $(basename "${WHEEL_FILE}") ($(du -sh "${WHEEL_FILE}" | awk '{print $1}'))"
+echo "Wheel:        ${WHEEL}"
+echo "Label:        ${LABEL}"
+echo "Build commit: ${BUILD_COMMIT}"
