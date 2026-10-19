@@ -1,93 +1,56 @@
-#!/usr/bin/env bash
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+#!/bin/bash
+# tuned/release.sh <variant> — run the release gates for the wheel tuned/package.sh made. Stage order:
+#   build.sh -> full_test.sh -> package.sh -> smoke_test.sh -> (review and commit tuned/releases/RELEASE_NOTES_<version>.md) -> this -> publish.sh
+# It never builds, tests, packages or publishes (docs/ARCHITECTURE.md B3, I5). If every gate passes it writes the
+# ready-marker (gpu_tuned_release_ready, RELEASE_READY_<variant>); tuned/publish.sh <variant> publishes exactly what
+# the gates saw. The gates are the common ones in tuned-common (gpu_tuned_release_gates), all reported together.
 #
-# tuned/release.sh <variant> — check an already-built (tuned/wheel.sh
-# <variant>) vllm wheel and, if it is there, write the ready-marker that
-# tuned/publish.sh <variant> publishes as a GitHub release (tag shape
-# matches zbrad/raft's/zbrad/cuvs's/zbrad/faiss's/zbrad/flashinfer's
-# tuned/ publish conventions: v<version>-<variant>-<cuda_tag>, --target
-# tuned-builds). It never publishes. vllm previously only did an editable
-# install -- no wheel, no publish step -- of everything in this repo set,
-# it was the only true leaf with no artifact at all.
+#   CUDA_TAG=cu134 bash tuned/release.sh gb10
 #
-# vllm's own version is setuptools_scm-derived (git-describe style, e.g.
-# 8.4.dev7+g2b9dcbd29.gb10.cu133) rather than a plain x.y.z like
-# raft/cuvs/faiss/flashinfer -- there's no clean SHORT_VER reduction for
-# it, so the release tag uses the dev-version's base (before the "+"
-# local-version segment, which already separately encodes variant+cuda
-# tag) plus an explicit -<variant>-<cuda_tag> suffix, for the same tag
-# shape as every other repo in this set.
-#
-# Usage:
-#   bash tuned/wheel.sh gb10       # first, produces dist/gb10/*.whl
-#   bash tuned/release.sh gb10     # then, check it and write the ready-marker
-#   bash tuned/publish.sh gb10     # then, publish it
-set -euo pipefail
+# The release is named by the wheel's date label (v<version>, the version ending +<variant>.cu<cuda>.<YYYYMMDD>[.<seq>]),
+# read from package-info.txt and never recomputed here: the notes commit moves HEAD and its date.
+set -uo pipefail
 
-GPU_TUNED_ARG_VARIANT="$1"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+REPODIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+GPU_TUNED_ARG_VARIANT="${1:?usage: tuned/release.sh <variant>}"
 
-GPU_TUNED_SELF_DIR="${REPO_ROOT}/tuned"
-# shellcheck source=devices/rtx50.conf
-source "${GPU_TUNED_SELF_DIR}/devices/${GPU_TUNED_ARG_VARIANT}.conf"
-# shellcheck source=common.sh
-source "${GPU_TUNED_SELF_DIR}/common.sh"
+# shellcheck source=env.sh
+source "${REPODIR}/tuned/env.sh" "${GPU_TUNED_ARG_VARIANT}" || exit 1
+cd "${REPODIR}" || exit 1
 
-DIST_DIR="${REPO_ROOT}/dist/${GPU_TUNED_VARIANT}"
-MARKER="${DIST_DIR}/RELEASE_READY_${GPU_TUNED_VARIANT}"
+INFO="${GPU_TUNED_DIST_DIR}/package-info.txt"
+TEST_LOG="${GPU_TUNED_RELEASES_DIR}/TEST_RESULTS_${GPU_TUNED_VARIANT}.log"
+SMOKE_LOG="${GPU_TUNED_RELEASES_DIR}/SMOKE_RESULTS_${GPU_TUNED_VARIANT}.log"
+MARKER="${GPU_TUNED_RELEASES_DIR}/RELEASE_READY_${GPU_TUNED_VARIANT}"
 gpu_tuned_release_marker_clear "${MARKER}"
-WHEEL_FILE="$(find "${DIST_DIR}" -maxdepth 1 -name '*.whl' | head -1)"
-if [[ -z "${WHEEL_FILE}" ]]; then
-    echo "ERROR: no wheel found in ${DIST_DIR}." >&2
-    echo "  Run 'bash tuned/wheel.sh ${GPU_TUNED_VARIANT}' first." >&2
+
+if [[ ! -f "${INFO}" ]]; then
+    echo "ERROR: ${INFO} not found -- run 'CUDA_TAG=${CUDA_TAG} bash tuned/package.sh ${GPU_TUNED_VARIANT}' at the commit being released first." >&2
     exit 1
 fi
-WHEEL_BASENAME="$(basename "${WHEEL_FILE}")"
+info() { sed -n "s/^$1=//p" "${INFO}"; }
+RELEASE_TAG="$(info release_tag)"; WHEEL_NAME="$(info wheel)"; WHEEL="${GPU_TUNED_DIST_DIR}/${WHEEL_NAME}"
+PACKAGED_COMMIT="$(info commit)"; BASE_VERSION="$(info upstream_version)"
+# The compared build artifact is the unstamped wheel in wheel/, not the packaged copy in dist/: packaging writes
+# dist/ on every run, so its mtime would move past the test log.
+BUILT_WHEEL="${GPU_TUNED_WHEEL_DIR}/${WHEEL_NAME}"
+RELEASE_NOTES_FILE="tuned/releases/RELEASE_NOTES_${RELEASE_TAG#v}.md"
+RELEASE_TITLE="vLLM ${BASE_VERSION} — ${GPU_TUNED_VARIANT} ${CUDA_TAG} (${RELEASE_TAG#v}) — ${GPU_TUNED_HW_LABEL} wheel"
 
-# e.g. vllm-8.4.dev7+g2b9dcbd29.gb10.cu133.20261011-cp314-...whl -> full
-# version 8.4.dev7+g2b9dcbd29.gb10.cu133.20261011. Used as-is for the
-# release tag: its local segment (git sha, variant, cuda tag, date label)
-# already carries everything a hand-rebuilt -<variant>-<cuda_tag> suffix
-# would, and stripping-then-re-appending only part of it (the old shape
-# here) would silently drop the label from the tag while it stayed
-# visible in the title.
-FULL_VERSION="$(gpu_tuned_wheel_version "${WHEEL_FILE}" vllm)" || exit 1
+echo "Release ${RELEASE_TAG} (vLLM ${BASE_VERSION}, packaged at ${PACKAGED_COMMIT}):"
 
-# Friendly title only -- RELEASE_TAG below stays the exact FULL_VERSION.
-# CUDA_VERSION_COMPACT/GIT_SHA/date label aren't computed anywhere else
-# in this file (vllm has no tuned/env.sh), so pull them back out of
-# FULL_VERSION rather than adding a second, possibly-drifting source for
-# them.
-GIT_SHA="$(git rev-parse --short HEAD)"
-BASE_VERSION="${FULL_VERSION%%.dev*}"          # setuptools_scm's guessed-next-version, before .devN
-CUDA_TAG="$(echo "${FULL_VERSION}" | grep -oE 'cu[0-9]+' | head -1)"
-# A wheel without a date label (a counter-era tuning.N build left in dist/, or one built
-# outside tuned/wheel.sh) is refused: the label is the release's identity, and the title and
-# tag must show the same string the wheel carries.
-DATE_LABEL="$(gpu_tuned_date_label "${FULL_VERSION}")"
-if [[ -z "${DATE_LABEL}" ]]; then
-    echo "ERROR: ${WHEEL_BASENAME} has no date label (<variant>.cu<cuda>.<YYYYMMDD>[.<seq>]) in its version '${FULL_VERSION}'." >&2
-    echo "  Rebuild it with 'bash tuned/wheel.sh ${GPU_TUNED_VARIANT}'; counter-era (tuning.N) wheels are not released." >&2
-    exit 1
-fi
+gpu_tuned_release_gates tag="${RELEASE_TAG}" variant="${GPU_TUNED_VARIANT}" cuda="${CUDA_TAG}" info="${INFO}" \
+    built="${BUILT_WHEEL}" test_log="${TEST_LOG}" \
+    test_pass='^=== Full test suite summary: acceptance \+ tuned tests passed ===$' \
+    tarball="${WHEEL}" smoke_log="${SMOKE_LOG}" notes="${RELEASE_NOTES_FILE}" packaged="${PACKAGED_COMMIT}" \
+    || { echo "" >&2; echo "ERROR: a release gate failed; nothing was published (and no ready-marker was written)." >&2; exit 1; }
 
-RELEASE_TAG="v${FULL_VERSION}"
-RELEASE_TITLE="vLLM ${BASE_VERSION} — ${GPU_TUNED_VARIANT} ${DATE_LABEL} (${CUDA_TAG}, ${GIT_SHA}) — ${GPU_TUNED_HW_LABEL}"
-
-echo "===================================================="
-echo "vllm ${GPU_TUNED_HW_LABEL} Release"
-echo "===================================================="
-echo "  Wheel   : ${WHEEL_BASENAME}"
-echo "  Version : ${FULL_VERSION}"
 echo ""
-# Release notes are passed to gpu_tuned_release_ready as a file (its marker records the file's sha256).
-NOTES_FILE="${DIST_DIR}/RELEASE_NOTES.md"
-printf '%s\n' "vllm ${FULL_VERSION} wheel for ${GPU_TUNED_HW_LABEL}, single-arch (TORCH_CUDA_ARCH_LIST=${GPU_TUNED_TORCH_ARCH}). Depends on zbrad/pytorch's and zbrad/flash-attention's matching gb10 releases (see requirements/gb10.txt and tuned/devices/${GPU_TUNED_VARIANT}.conf)." > "${NOTES_FILE}"
-
-echo "Recording ready-marker for GitHub release ${RELEASE_TAG} (publish with tuned/publish.sh ${GPU_TUNED_VARIANT})..."
 gpu_tuned_release_ready "${MARKER}" "zbrad/vllm" "${RELEASE_TAG}" "${RELEASE_TITLE}" \
-    "${NOTES_FILE}" "${WHEEL_FILE}#${WHEEL_BASENAME}"
+    "${RELEASE_NOTES_FILE}" \
+    "${WHEEL}#${WHEEL_NAME}" \
+    "${WHEEL}.sha256#${WHEEL_NAME}.sha256" \
+    "${TEST_LOG}#Test results (${GPU_TUNED_VARIANT})" \
+    "${SMOKE_LOG}#Package smoke test results (${GPU_TUNED_VARIANT})" || exit 1
 
 echo "Done."
