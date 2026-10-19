@@ -99,6 +99,8 @@ export GPU_TUNED_BUILD_ROOT GPU_TUNED_VENV_DIR GPU_TUNED_WHEEL_DIR GPU_TUNED_CMA
 # ccache is per toolkit (C4). CCACHE_DIR makes ccache ignore ~/.config/ccache, whose default size is too small.
 export CCACHE_DIR="${GPU_TUNED_BUILD_ROOT}/ccache"
 export CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-60G}"
+# setup.py's FetchContent downloads default to the repo's .deps/, shared by every toolkit and the dev build.
+export FETCHCONTENT_BASE_DIR="${GPU_TUNED_BUILD_ROOT}/deps"
 
 # --- Build parallelism: gpu_tuned_jobs unless MAX_JOBS is set (C5). NVCC_THREADS=1 keeps MAX_JOBS
 #     as the real number of compile jobs (setup.py divides MAX_JOBS by NVCC_THREADS). ---

@@ -110,6 +110,8 @@ print("\n".join(bad) if bad else "clean")
     gpu_tuned_verify_toolkit_libs "${SITE_DIR}/vllm/_C_stable_libtorch.abi3.so" && ok "toolkit libraries resolve under ${CUDA_HOME}" \
         || fail "toolkit libraries do not resolve under ${CUDA_HOME}"
 
+    "${PY}" -m pip install --quiet -r tuned/requirements-test.txt || fail "test tooling did not install"
+
     # Three real tests from this repo, against the installed package. Pytest runs in the empty directory with
     # the repo appended after site-packages; --import-mode=importlib keeps the repo root off sys.path[0].
     run_one() {

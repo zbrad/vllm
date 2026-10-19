@@ -1,1 +1,11 @@
-pytest==9.0.2
+# Test tooling for tuned/full_test.sh and tuned/smoke_test.sh, installed into the toolkit's build venv.
+# The versions are upstream's (requirements/test/cuda.txt) for what tests/conftest.py and the smoke tests
+# import. torch, flashinfer and the nvidia wheels are deliberately absent: the GB10 torch is already in the venv.
+pytest==9.1.0
+tblib==3.1.0
+pillow==12.3.0
+transformers==5.19.0
+huggingface-hub==1.31.0
+numpy==2.2.6
+pyyaml==6.0.2
+requests==2.34.2

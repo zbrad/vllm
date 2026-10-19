@@ -37,6 +37,7 @@ Everything a build makes lives in `tuned/build/<cuda-tag>/` (ignored by git, one
 - `cmake/`: the CMake build tree and setuptools' build directory (`build --build-base`), so the repo's everyday
   `build/` is never written (C6).
 - `ccache/`: the compiler cache for that toolkit (C4).
+- `deps/`: FetchContent downloads for that toolkit (`FETCHCONTENT_BASE_DIR`, set in `env.sh`), not the repo's `.deps/`.
 - `wheel/`: the unstamped wheel that `full_test.sh` tests. `package.sh` never modifies it (H3).
 - `dist/`: the stamped wheel, its `.sha256`, and `package-info.txt` (written last).
 - `releases/`: `TEST_RESULTS_<variant>.log`, `SMOKE_RESULTS_<variant>.log`, and `RELEASE_READY_<variant>` once
@@ -74,15 +75,19 @@ it skips in its header: upstream's `tests/` suite is not run.
 
 ## Deviations and open items
 
-- **Dependencies in the test venv.** The test and smoke steps use the toolkit's build venv, which holds the
-  dependency set `build.sh` pinned from `requirements/gb10.txt` (or `cuda.txt`). A clean-venv resolution would
-  re-download the GB10 torch and flashinfer wheels for every test. The wheel itself is installed `--no-deps`.
+- **Test and smoke venv (G2 exception).** The test and smoke steps use the toolkit's build venv, which holds the
+  dependency set `build.sh` pinned from `requirements/gb10.txt` (or `cuda.txt`), not a clean venv. A clean-venv
+  resolution would re-download the GB10 torch and flashinfer wheels for every test, so the smoke test does not
+  prove that the wheel's `torch @ URL` and flashinfer dependencies resolve for a consumer. The wheel itself is
+  installed `--no-deps`.
+- **Test tooling pins** (`tuned/requirements-test.txt`) copy upstream's `requirements/test/cuda.txt` for what
+  `tests/conftest.py` imports, without torch or the nvidia wheels. The resolution has not been run here.
 - **F4 (not met for torch).** vLLM ships no shared library with a stock torch name, and `package.sh` refuses one
   (its extension modules are named by module). But the extensions NEED torch's stock-named libraries from the
   zbrad/pytorch wheel, which still ships them (see the pytorch repo's `tuned/README.md`).
 - **NCCL** comes from the torch wheel. There is no `nccl.pins` entry here, because vLLM links no NCCL itself.
-- **Source files written by a build.** setuptools_scm writes `vllm/_version.py` and `vllm.egg-info/`, and
-  FetchContent writes `.deps/`. All are gitignored; none is in the wheel's identity.
+- **Source files written by a build.** setuptools_scm writes `vllm/_version.py` and `vllm.egg-info/`. Both are
+  gitignored; neither is in the wheel's identity.
 - **`VLLM_GB10_LOCAL_VERSION` and `gb10_version.py`** keep their GB10 names for every variant; the variant is in
   the value.
 - **Stand-in acceptance models** are not the target models; the real checkpoints are not downloaded here.
