@@ -54,7 +54,10 @@ echo "Git commit:           $(git rev-parse --short HEAD)"
 
 # The unstamped wheel: built through setuptools' PEP 517 backend with --build-base pointed at the toolkit's
 # cmake/ tree. --no-isolation: the build venv already holds the build requirements (build.sh installs them).
-python3 -m build --wheel --no-isolation --outdir "${GPU_TUNED_WHEEL_DIR}" \
+# --skip-dependency-check: pyproject.toml pins torch==2.13.0 for upstream's own build, but this venv deliberately
+# holds the tuned torch wheel from requirements/gb10.txt (the old pip install --no-build-isolation never checked
+# that pin either; build.sh dropped upstream's torch line from the build requirements for the same reason).
+python3 -m build --wheel --no-isolation --skip-dependency-check --outdir "${GPU_TUNED_WHEEL_DIR}" \
     --config-setting="--build-option=build --build-base=${GPU_TUNED_CMAKE_DIR}"
 
 WHEEL="$(ls "${GPU_TUNED_WHEEL_DIR}"/vllm-*.whl 2>/dev/null | head -1)"
