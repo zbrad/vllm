@@ -79,7 +79,7 @@ installed), `yujiepan/deepseek-v3-tiny-random` (MLA dimensions too small). **Dee
 
 ## Provenance
 
-- Release label `20261020.0` (UTC date of the tuned commit). Built, acceptance-tested and packaged at `0917319d838d32472eecab2c29b00398904408ca` (the pin bump of `requirements/gb10.txt` to the new flashinfer release).
-- Wheel sha256 `e8eb4a9f23e3489e5a15a3809db33d928b94fcd29e54608e5a9ac84df23938e1`.
+- Release label `20261020.0` (UTC date of the tuned commit). Built and acceptance-tested at `0917319d838d32472eecab2c29b00398904408ca` (the pin bump of `requirements/gb10.txt` to the new flashinfer release); packaged and smoke-tested at `8bd221e72e5fb5eb1a122355ce2ae1596b4ed8d6` (only `tuned/compliance.conf` and the notes changed between them).
+- Wheel sha256 `52dfcebc8a58409ee2e314d0184deb2ebf498218c554e4244a2411cde95fd4d5`.
 - Upstream base: `v0.32.0` (`5df63a7203`), merge-base with upstream/main `fe341a53dda00472c281a2d1f4bd34a74e7eae6e`.
 - Prebuilt dependencies: `requirements/gb10.txt` (torch, flashinfer) and `vllm_flash_attn` `2.7.2.post1+gb10.cu134.tuning.37` from `zbrad/flash-attention-vllm`.
