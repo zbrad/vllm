@@ -36,7 +36,7 @@ vllm serve <model>
 | vllm_flash_attn (separate wheel, `zbrad/flash-attention-vllm` `tuning.37`) | `_vllm_fa2_C.abi3.so` | native `sm_121a`, no PTX (flash-attention repo's own check, not repeated here) | exercised by the NemotronH stand-ins (flash-attn attention) | passed |
 | torch (separate wheel, `zbrad/pytorch` `2.15.0+gb10.cu134.20261012`) | pinned dependency | n/a here | exercised by every test | passed |
 | flashinfer (`zbrad/flashinfer` `0.7.0+gb10.cu134.20261019.0`, python + jit-cache) | pinned dependency; 174 precompiled objects including the `xqa` and `trtllm_utils` modules | see the flashinfer release notes | both NemotronH stand-ins with `FLASHINFER_DISABLE_JIT=1` and an empty workspace | passed |
-| Package as installed | stamped wheel (`sha256 e8eb4a9f…38e1`) | build-info stamp on `_C` and `_moe_C` | smoke: 216 + 126 + 192 kernel tests against the installed package | passed |
+| Package as installed | stamped wheel (`sha256 52dfcebc…d4d5`) | build-info stamp on `_C` and `_moe_C` | smoke: 216 + 126 + 192 kernel tests against the installed package | passed |
 
 ## Tests
 
