@@ -14,6 +14,7 @@ import pytest
 
 import vllm.ext.platforms.cuda_ext as cuda_ext
 from vllm.ext.platforms.cuda_ext import CudaExt
+from vllm.ext.tuned_flags import TunedFlags
 from vllm.platforms.interface import DeviceCapability
 
 
@@ -117,3 +118,33 @@ def test_driver_max_cuda_version_shuts_down_nvml_on_query_failure():
         assert CudaExt._driver_max_cuda_version() is None
         mock_init.assert_called_once()
         mock_shutdown.assert_called_once()
+
+
+def test_guard_skipped_when_the_wheel_asserts_native_only_fa2():
+    """tuned/package.sh bakes FLASH_ATTN_FA2_NATIVE_ONLY into the wheel after checking
+    the library with cuobjdump; the guard then has nothing to check, build > driver or not."""
+    with (
+        patch.object(TunedFlags, "FLASH_ATTN_FA2_NATIVE_ONLY", True),
+        patch.object(CudaExt, "_build_cuda_version", return_value=(13, 4)),
+        patch.object(CudaExt, "_driver_max_cuda_version", return_value=(13, 0)),
+    ):
+        CudaExt.check_flash_attn_ptx_compat(DeviceCapability(12, 1))
+
+
+def test_environment_variable_no_longer_skips_the_guard(monkeypatch):
+    """The assertion used to be VLLM_FLASH_ATTN_NO_PTX, set only by tuned/run_gb10.sh,
+    so behavior depended on how vllm was started. It must have no effect now."""
+    monkeypatch.setenv("VLLM_FLASH_ATTN_NO_PTX", "1")
+    with (
+        patch.object(TunedFlags, "FLASH_ATTN_FA2_NATIVE_ONLY", False),
+        patch.object(CudaExt, "_build_cuda_version", return_value=(13, 4)),
+        patch.object(CudaExt, "_driver_max_cuda_version", return_value=(13, 0)),
+        pytest.raises(RuntimeError, match="cudaErrorUnsupportedPtxVersion"),
+    ):
+        CudaExt.check_flash_attn_ptx_compat(DeviceCapability(12, 1))
+
+
+def test_source_checkout_asserts_nothing():
+    """The tracked stub is all False; only a packaged wheel carries True values."""
+    assert TunedFlags.FLASH_ATTN_FA2_NATIVE_ONLY is False
+    assert TunedFlags.FLASHINFER_DISABLE_JIT is False

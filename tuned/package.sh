@@ -94,7 +94,18 @@ leaks="$(find "${UNPACKED}" -type f -name '*.so*' -exec basename {} \; | grep -E
 [[ -z "${leaks}" ]] || { echo "ERROR: the wheel ships shared objects under stock torch names: ${leaks}" >&2; exit 1; }
 
 STAMP_LIBS=("${UNPACKED}/vllm/_C_stable_libtorch.abi3.so" "${UNPACKED}/vllm/_moe_C_stable_libtorch.abi3.so")
-for so in "${STAMP_LIBS[@]}"; do
+# vllm_flash_attn comes from the prebuilt zbrad/flash-attention-vllm wheel, not from this build, so it is checked here but
+# not stamped. It gets the same arch and no-PTX checks as our own extensions; if it passes, the wheel asserts it below.
+FA2_LIB="${UNPACKED}/vllm/vllm_flash_attn/_vllm_fa2_C.abi3.so"
+FA2_CHECKED=0
+CHECK_LIBS=("${STAMP_LIBS[@]}")
+if [[ -f "${FA2_LIB}" ]]; then
+    CHECK_LIBS+=("${FA2_LIB}")
+    FA2_CHECKED=1
+else
+    echo "NOTE: ${FA2_LIB#"${UNPACK_DIR}"/} is not in the wheel; FLASH_ATTN_FA2_NATIVE_ONLY stays False." >&2
+fi
+for so in "${CHECK_LIBS[@]}"; do
     [[ -f "${so}" ]] || { echo "ERROR: ${so#"${UNPACK_DIR}"/} not found inside ${BUILT_NAME}." >&2; exit 1; }
     gpu_tuned_so_has_device_code "${so}" || { echo "ERROR: ${so#"${UNPACK_DIR}"/} has no device code: the stamp would not describe a GPU build." >&2; exit 1; }
     gpu_tuned_verify_arch "${so}" "${GPU_TUNED_TORCH_ARCH}" || exit 1
@@ -115,6 +126,23 @@ for so in "${STAMP_LIBS[@]}"; do
         || { echo "ERROR: could not stamp ${so#"${UNPACK_DIR}"/}." >&2; exit 1; }
 done
 echo "OK: ${#STAMP_LIBS[@]} extensions stamped and read back (release, variant, cuda.tag)"
+
+# Bake the flags the wheel carries (vllm/ext/tuned_flags.py): decided here, from what was just checked, and read by the
+# code at run time instead of environment variables only run_gb10.sh used to set. The sed patterns are the exact lines of
+# the tracked stub; tuned/tests/test_tuned_flags.py fails if the two drift, and each edit is read back.
+FLAGS_PY="${UNPACKED}/vllm/ext/tuned_flags.py"
+[[ -f "${FLAGS_PY}" ]] || { echo "ERROR: vllm/ext/tuned_flags.py is not in ${BUILT_NAME}." >&2; exit 1; }
+if [[ "${FA2_CHECKED}" -eq 1 ]]; then
+    sed -i 's/^    FLASH_ATTN_FA2_NATIVE_ONLY: bool = False$/    FLASH_ATTN_FA2_NATIVE_ONLY: bool = True/' "${FLAGS_PY}"
+    grep -q '^    FLASH_ATTN_FA2_NATIVE_ONLY: bool = True$' "${FLAGS_PY}" \
+        || { echo "ERROR: could not set FLASH_ATTN_FA2_NATIVE_ONLY in tuned_flags.py." >&2; exit 1; }
+fi
+if [[ "${GPU_TUNED_VARIANT}" == "gb10" ]]; then
+    sed -i 's/^    FLASHINFER_DISABLE_JIT: bool = False$/    FLASHINFER_DISABLE_JIT: bool = True/' "${FLAGS_PY}"
+    grep -q '^    FLASHINFER_DISABLE_JIT: bool = True$' "${FLAGS_PY}" \
+        || { echo "ERROR: could not set FLASHINFER_DISABLE_JIT in tuned_flags.py." >&2; exit 1; }
+fi
+echo "OK: tuned_flags.py written: $(grep -E '^    (FLASH_ATTN_FA2_NATIVE_ONLY|FLASHINFER_DISABLE_JIT):' "${FLAGS_PY}" | sed 's/^ *//' | paste -sd' ' -)"
 
 python3 -m wheel pack "${UNPACKED}" --dest-dir "${GPU_TUNED_DIST_DIR}"
 WHEEL="${GPU_TUNED_DIST_DIR}/${BUILT_NAME}"

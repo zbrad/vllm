@@ -982,3 +982,13 @@ if os.environ.get("VLLM_TRITON_FORCE_FIRST_CONFIG", "0").strip().lower() in (
     )
 
     _install_force_first_config()
+
+# ============================================================
+# Tuned-build defaults (zbrad/vllm tuned-builds; no upstream counterpart)
+# ============================================================
+# Flags the wheel carries, written by tuned/package.sh (vllm/ext/tuned_flags.py).
+# setdefault: an explicit value, even an empty one, still wins.
+from vllm.ext.tuned_flags import TunedFlags as _TunedFlags
+
+if _TunedFlags.FLASHINFER_DISABLE_JIT:
+    os.environ.setdefault("FLASHINFER_DISABLE_JIT", "1")

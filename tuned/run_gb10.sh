@@ -9,39 +9,10 @@
 
 set -euo pipefail
 
-# flashinfer-jit-cache (the AOT-compiled GB10 kernel cache, see
-# requirements/gb10.txt) is now published at the same +gb10 version as
-# flashinfer-python, so flashinfer.jit.env's version-equality check passes
-# on its own -- FLASHINFER_DISABLE_VERSION_CHECK is no longer needed.
-#
-# That jit-cache release is scoped to two target models (NemotronH,
-# DeepSeek-V4-Flash; see requirements/gb10.txt) -- FLASHINFER_DISABLE_JIT=1
-# turns any op outside that filtered set into a hard MissingJITCacheError
-# instead of a silent (working, just slower on first call) JIT compile.
-#
-# flashinfer checks `os.environ.get("FLASHINFER_DISABLE_JIT")` truthily
-# (flashinfer/jit/core.py) -- FLASHINFER_DISABLE_JIT=0 is still a non-empty
-# string and stays "disabled". `${VAR-default}` (no colon) substitutes only
-# when VAR is completely unset, unlike `${VAR:-default}` which also
-# substitutes for an empty string -- so to actually allow JIT for other
-# models, set it to *empty* rather than unsetting it or using 0, e.g.:
+# FLASHINFER_DISABLE_JIT and the FLASH_ATTN native-cubin assertion used to be exported here, so a vllm started any other
+# way behaved differently. They are now carried by the wheel (vllm/ext/tuned_flags.py, written by tuned/package.sh) and
+# apply however vllm is started. To allow JIT for an op outside the shipped AOT cache, set the variable to empty:
 #   FLASHINFER_DISABLE_JIT= tuned/run_gb10.sh serve ...
-export FLASHINFER_DISABLE_JIT="${FLASHINFER_DISABLE_JIT-1}"
-
-# Asserts that THIS deployment's _vllm_fa2_C (zbrad/flash-attention-vllm's
-# tuned/build.sh gb10) was compiled with a real native sm_121a cubin
-# (CUDA_ARCHS=12.1a), not upstream's PTX-only consumer-Blackwell build --
-# verified via cuobjdump (no embedded PTX) at the time this was added, see
-# vllm/platforms/cuda.py's _flash_attn_no_ptx_asserted(). Lets that check
-# skip a false-positive PTX/driver-version hard failure it would otherwise
-# raise for every GB10 box, gb10-tuned-build or not. Deliberately a
-# separate, explicit assertion rather than inferred from the gb10 build
-# marker alone -- a gb10 build isn't guaranteed to always be compiled this
-# way (see that function's own docstring). Same unset-vs-empty truthiness
-# as FLASHINFER_DISABLE_JIT above -- unset it (VLLM_FLASH_ATTN_NO_PTX=
-# tuned/run_gb10.sh serve ...) if this build's cubin coverage is ever in
-# doubt again.
-export VLLM_FLASH_ATTN_NO_PTX="${VLLM_FLASH_ATTN_NO_PTX-1}"
 
 # Fail fast, before spending minutes loading the real model, if this
 # torch/flashinfer combination has a known fp4-quantization arch-coverage

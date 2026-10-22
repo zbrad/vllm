@@ -9,11 +9,11 @@ conflict-free; cuda.py only imports `CudaExt` and calls
 from __future__ import annotations
 
 import importlib.metadata
-import os
 
 import regex as re
 
 import vllm.envs as envs
+from vllm.ext.tuned_flags import TunedFlags
 from vllm.logger import init_logger
 from vllm.platforms.interface import DeviceCapability
 from vllm.utils.import_utils import import_pynvml
@@ -38,42 +38,23 @@ class CudaExt:
 
     @staticmethod
     def _flash_attn_no_ptx_asserted() -> bool:
-        """True only when BOTH of these hold:
+        """True when this install carries the packaging-time assertion that
+        `_vllm_fa2_C` holds native cubins and no PTX.
 
-        1. The installed vllm package's own local version carries the `gb10`
-           marker `setup.py`'s `get_vllm_version()` writes at build time
-           (`VLLM_GB10_BUILD=1`, set by `tuned/build.sh gb10`/`tuned/wheel.sh
-           gb10`).
-        2. `VLLM_FLASH_ATTN_NO_PTX` is set (set by `tuned/run_gb10.sh`,
-           mirroring `FLASHINFER_DISABLE_JIT`'s pattern there, and
-           `FLASH_ATTN_NO_PTX`'s naming in zbrad/flash-attention's own
-           tuned/env.sh).
-
-        Neither alone is sufficient. A "gb10 build" only describes *which
-        device this was built for*, not *how* -- zbrad/flash-attention-vllm's
-        `tuned/build.sh` currently always compiles with `CUDA_ARCHS=12.1a` (a
-        real, architecture-specific native cubin, verified via cuobjdump:
-        30+ native sm_121a cubins, zero embedded PTX, so it can never hit
-        cudaErrorUnsupportedPtxVersion), but that's an operational fact about
-        a specific build script's current behavior, not something this
-        runtime check can verify on its own -- a gb10 build could in
-        principle be compiled with a family-generic/PTX-carrying arch spec
-        instead, in which case skipping this check would be wrong. The env
-        var makes it an explicit, deliberate deployment assertion instead of
-        an inference from the version string alone -- and is meaningless (and
-        dangerous to honor) without the gb10 marker confirming this vllm
-        install is even the one that assertion was meant for.
+        The assertion is `TunedFlags.FLASH_ATTN_FA2_NATIVE_ONLY` (vllm/ext/
+        tuned_flags.py). It is False in a source checkout. `tuned/package.sh`
+        sets it inside the wheel, and only after running cuobjdump on
+        `vllm_flash_attn/_vllm_fa2_C.abi3.so` and finding native cubins for the
+        wheel's arch and no PTX. It does not depend on how the process was
+        started, and the build's CUDA version says nothing about that library,
+        which is built separately (zbrad/flash-attention-vllm).
 
         Returns:
-            True when both the marker and the environment variable are present.
+            True when the wheel asserts native-only FA2; the guard then has
+            nothing to check.
 
         """
-        if not os.environ.get("VLLM_FLASH_ATTN_NO_PTX"):
-            return False
-        try:
-            return "gb10" in importlib.metadata.version("vllm")
-        except importlib.metadata.PackageNotFoundError:
-            return False
+        return TunedFlags.FLASH_ATTN_FA2_NATIVE_ONLY
 
     @staticmethod
     def _driver_max_cuda_version() -> tuple[int, int] | None:
@@ -159,13 +140,13 @@ class CudaExt:
         if cls._flash_attn_no_ptx_asserted():
             logger.info_once(
                 "Skipping the FLASH_ATTN PTX/driver compatibility check: this "
-                "GB10 tuned build has explicitly asserted (VLLM_FLASH_ATTN_NO_PTX, "
-                "set by tuned/run_gb10.sh) that its _vllm_fa2_C was compiled "
+                "GB10 tuned build asserts (TunedFlags.FLASH_ATTN_FA2_NATIVE_ONLY, "
+                "written by tuned/package.sh) that its _vllm_fa2_C was compiled "
                 "with a real native sm_121a cubin (CUDA_ARCHS=12.1a in "
                 "zbrad/flash-attention-vllm's tuned/build.sh) rather than "
                 "upstream's PTX-only consumer-Blackwell build -- verified via "
-                "cuobjdump (no embedded PTX) at the time that assertion was "
-                "added, so it can't hit cudaErrorUnsupportedPtxVersion "
+                "cuobjdump (native cubins, no embedded PTX) when the wheel was "
+                "packaged, so it can't hit cudaErrorUnsupportedPtxVersion "
                 "regardless of driver/toolkit skew."
             )
             return
