@@ -39,6 +39,7 @@ from vllm.multimodal.inputs import (
 from vllm.sampling_params import SamplingParams
 from vllm.utils.hashing import sha256, sha256_cbor
 from vllm.v1.core.block_pool import BlockHashToBlockMap, BlockPool
+from vllm.v1.core.extendible_block_hash_map import ExtendibleBlockHashMap
 from vllm.v1.core.kv_cache_manager import KVCacheBlocks, KVCacheManager, Request
 from vllm.v1.core.kv_cache_utils import (
     BlockHash,
@@ -2261,21 +2262,24 @@ def _test_partial_request_hit(
     hash_to_evict: list[BlockHashWithGroupId],
     expect_hit_length: int,
 ):
-    cached_block_hash_to_block_bak = copy.copy(
-        manager.block_pool.cached_block_hash_to_block._cache
-    )
-    req = make_request(request_id, prompt_token_ids, block_size, sha256)
+    block_map = manager.block_pool.cached_block_hash_to_block
+    # Evict every block under each hash (the dict map can hold duplicates).
+    evicted = []
     for hash_with_group_id in hash_to_evict:
-        manager.block_pool.cached_block_hash_to_block._cache.pop(hash_with_group_id)
+        block = block_map.get_one_block(hash_with_group_id)
+        assert block is not None
+        while block is not None:
+            block_map.pop(hash_with_group_id, block.block_id)
+            evicted.append((hash_with_group_id, block))
+            block = block_map.get_one_block(hash_with_group_id)
+    req = make_request(request_id, prompt_token_ids, block_size, sha256)
     computed_blocks, num_computed_tokens, _ = manager.get_computed_blocks(req)
     assert len(req.block_hashes) == num_full_blocks
     assert num_computed_tokens == expect_hit_length * block_size
     for block_per_group in computed_blocks.blocks:
         assert len(block_per_group) == num_computed_tokens // block_size
-    for hash_with_group_id in hash_to_evict:
-        manager.block_pool.cached_block_hash_to_block._cache[hash_with_group_id] = (
-            cached_block_hash_to_block_bak[hash_with_group_id]
-        )
+    for hash_with_group_id, block in evicted:
+        block_map.insert(hash_with_group_id, block)
     manager.free(req)
 
 
@@ -2806,7 +2810,15 @@ def test_prefill_plp():
     assert blocks is not None
     block_ids = blocks.get_block_ids()
     # Duplicate cached blocks have different ids but same hashes vs request #0
-    assert [b.block_hash for b in blocks.blocks[0]] == req0_block_hashes
+    if isinstance(
+        manager.block_pool.cached_block_hash_to_block, ExtendibleBlockHashMap
+    ):
+        # First writer wins: the duplicates are not indexed, so they get no hash.
+        assert [b.block_hash for b in blocks.blocks[0]] == [None] * len(
+            req0_block_hashes
+        )
+    else:
+        assert [b.block_hash for b in blocks.blocks[0]] == req0_block_hashes
     assert block_ids != ([1, 2, 3, 4],)
 
     # Request #2 block hashes are valid since request #0 hashes are.
@@ -3570,33 +3582,28 @@ def test_maybe_evict_cached_block():
         pool.cached_block_hash_to_block.insert(block_hash, block)
 
     block0, block1, block2, block3 = pool.blocks
-    assert pool.cached_block_hash_to_block._cache == {
-        block_hash0: {
-            block0.block_id: block0,
-            block3.block_id: block3,
-        },
-        block_hash1: block1,
-        block_hash2: block2,
-    }
-    # Evict block1
-    pool._maybe_evict_cached_block(block1)
-    assert pool.cached_block_hash_to_block._cache == {
-        block_hash0: {block0.block_id: block0, block3.block_id: block3},
-        block_hash2: block2,
-    }
-    # Evict block0: block_hash0 entry should NOT be removed, as block3
-    # also use the same hash
-    pool._maybe_evict_cached_block(block0)
-    assert pool.cached_block_hash_to_block._cache == {
-        block_hash0: {block3.block_id: block3},
-        block_hash2: block2,
-    }
-    # Evict block2
-    pool._maybe_evict_cached_block(block2)
-    assert pool.cached_block_hash_to_block._cache == {block_hash0: {3: block3}}
-    # Evict block3
-    pool._maybe_evict_cached_block(block3)
-    assert pool.cached_block_hash_to_block._cache == {}
+
+    def indexed() -> set[tuple[BlockHashWithGroupId, int]]:
+        return {
+            (block_hash, block.block_id)
+            for block_hash in (block_hash0, block_hash1, block_hash2)
+            for block in pool.blocks
+            if pool.cached_block_hash_to_block.contain(block_hash, block.block_id)
+        }
+
+    # The dict map keeps block3 as a duplicate of block0's hash; the extendible
+    # map is first-writer-wins and leaves block3 unindexed.
+    expected = {(block_hash0, 0), (block_hash1, 1), (block_hash2, 2)}
+    if not isinstance(pool.cached_block_hash_to_block, ExtendibleBlockHashMap):
+        expected.add((block_hash0, 3))
+    assert indexed() == expected
+    # Evicting a block removes only its own entries: with the dict map,
+    # block_hash0 stays while block3 also uses it.
+    for block in (block1, block0, block2, block3):
+        pool._maybe_evict_cached_block(block)
+        expected = {entry for entry in expected if entry[1] != block.block_id}
+        assert indexed() == expected
+    assert len(pool.cached_block_hash_to_block) == 0
 
 
 @pytest.mark.parametrize("blocks_to_cache", [2, 3, 10])
@@ -4307,8 +4314,13 @@ def test_eagle_with_sliding_window():
         )
         is not None
     )
-    manager.block_pool.cached_block_hash_to_block._cache.pop(
-        make_block_hash_with_group_id(block_hash_first_block, 0)
+    first_block_key = make_block_hash_with_group_id(block_hash_first_block, 0)
+    first_block = manager.block_pool.cached_block_hash_to_block.get_one_block(
+        first_block_key
+    )
+    assert first_block is not None
+    manager.block_pool.cached_block_hash_to_block.pop(
+        first_block_key, first_block.block_id
     )
 
     # New request

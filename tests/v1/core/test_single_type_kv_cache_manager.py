@@ -508,7 +508,7 @@ def test_chunked_local_attention_possible_cached_prefix():
             BlockHash(str(i).encode()) for i in range(len(block_is_cached))
         ]
 
-        block_pool.cached_block_hash_to_block._cache.clear()
+        block_pool.cached_block_hash_to_block.clear()
 
         # Mock the block pool with the cached blocks
         for i, (block_hash, is_cached) in enumerate(
@@ -579,7 +579,7 @@ def test_sliding_window_possible_cached_prefix():
             BlockHash(str(i).encode()) for i in range(len(block_is_cached))
         ]
 
-        block_pool.cached_block_hash_to_block._cache.clear()
+        block_pool.cached_block_hash_to_block.clear()
 
         # Mock the block pool with the cached blocks
         for i, (block_hash, is_cached) in enumerate(

@@ -100,6 +100,10 @@ class BlockHashToBlockMap:
         else:
             self._unexpected_blocks_type(blocks)
 
+    def clear(self) -> None:
+        """Drops every entry."""
+        self._cache.clear()
+
     def insert_if_missing(
         self, key: BlockHashWithGroupId, block: KVCacheBlock
     ) -> KVCacheBlock | None:
