@@ -78,3 +78,22 @@ def test_random_operations_match_a_dict():
             assert index.get_one_block(key) is model.get(key)
     assert len(index) == len(model)
     assert index.global_depth <= MAX_GLOBAL_DEPTH
+
+
+def test_clear_empties_the_index_and_resets_the_depth():
+    index = ExtendibleBlockHashMap()
+    for ident in range(500):
+        index.insert_if_missing(make_key(ident), KVCacheBlock(ident))
+    assert index.global_depth > 0
+    index.clear()
+    assert len(index) == 0 and index.global_depth == 0
+    assert index.get_one_block(make_key(1)) is None
+
+
+def test_insert_leaves_a_duplicate_key_unindexed():
+    index = ExtendibleBlockHashMap()
+    first, second = KVCacheBlock(1), KVCacheBlock(2)
+    index.insert(make_key(1), first)
+    index.insert(make_key(1), second)
+    assert index.get_one_block(make_key(1)) is first
+    assert len(index) == 1

@@ -129,6 +129,18 @@ class ExtendibleBlockHashMap:
             self._live += 1
             return block
 
+    def insert(self, key: BlockHashWithGroupId, block: KVCacheBlock) -> None:
+        """Test-only: `BlockHashToBlockMap.insert`'s signature. A block refused
+        because another holds the key is silently left unindexed, so it does
+        not keep duplicates the way the dict map does."""
+        self.insert_if_missing(key, block)
+
+    def clear(self) -> None:
+        """Drops every entry and returns the directory to depth 0."""
+        self._global_depth = 0
+        self._directory = [_new_bucket(0)]
+        self._live = 0
+
     def pop(self, key: BlockHashWithGroupId, block_id: int) -> KVCacheBlock | None:
         """Tombstones the entry for `key` if it points at `block_id`."""
         shortkey = short_key(key)
