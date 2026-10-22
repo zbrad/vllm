@@ -34,9 +34,9 @@ torch @ https://github.com/zbrad/pytorch/releases/download/v2.15.0%2Bgb10.cu134.
 # instead) supplies the actual GB10 binary; flashinfer-python alone has no
 # compiled extension. Both wheels share the same +gb10 version, so the
 # FLASHINFER_DISABLE_VERSION_CHECK workaround this file previously needed
-# is no longer required. tuned/run_gb10.sh sets FLASHINFER_DISABLE_JIT=1 at
-# runtime by default, to get a hard fail instead of a silent JIT compile for
-# any op outside the filtered set.
+# is no longer required. The packaged vllm wheel defaults FLASHINFER_DISABLE_JIT=1 at
+# import (vllm/env_override.py, flag baked in by tuned/package.sh), to get a hard
+# fail instead of a silent JIT compile for any op outside the filtered set.
 flashinfer-python @ https://github.com/zbrad/flashinfer/releases/download/v0.7.0%2Bgb10.cu134.20261019.0/flashinfer_python-0.7.0%2Bgb10.cu134.20261019.0-py3-none-any.whl
 flashinfer-jit-cache @ https://github.com/zbrad/flashinfer/releases/download/v0.7.0%2Bgb10.cu134.20261019.0/flashinfer_jit_cache-0.7.0%2Bgb10.cu134.20261019.0-cp39-abi3-manylinux_2_28_aarch64.whl
 apache-tvm-ffi==0.1.11

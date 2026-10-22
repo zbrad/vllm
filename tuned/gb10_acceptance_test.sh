@@ -11,11 +11,11 @@
 # "the AOT cache covers these ops" -- investigation found strict no-JIT
 # coverage is not achievable with small stand-ins for either family (see
 # per-model notes below), so JIT is left enabled (FLASHINFER_DISABLE_JIT
-# unset) here by default. tuned/run_gb10.sh (which sets it to 1) is what
+# empty) here by default. The packaged wheel, which defaults it to 1, is what
 # enforces the stronger, AOT-only guarantee for the real target-shaped
 # models. To test under strict no-JIT instead, run with
 # FLASHINFER_DISABLE_JIT=1 set (flashinfer checks this env var truthily, so
-# only "set or unset" matters, not "0" vs "1" -- see tuned/run_gb10.sh).
+# only empty vs non-empty matters, not "0" vs "1").
 
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -23,12 +23,13 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # so `from vllm import` loads the installed wheel and not the source tree.
 : "${TUNED_PYTHON:?TUNED_PYTHON must name the toolkit venv python (tuned/full_test.sh sets it)}"
 
-# flashinfer checks this env var truthily (flashinfer/jit/core.py) -- only
-# "unset vs set" matters, not the value. Leaving FLASHINFER_DISABLE_JIT
-# unset here (the default) means JIT stays allowed; pass it set to any
-# non-empty value to force strict no-JIT instead.
+# flashinfer checks this env var truthily (os.environ.get in flashinfer/jit/core.py), so an
+# empty value means JIT stays allowed; pass it non-empty to force strict no-JIT instead.
+# It is exported EMPTY rather than unset: the installed tuned wheel defaults an unset
+# FLASHINFER_DISABLE_JIT to 1 (vllm/env_override.py, TunedFlags), and an explicit empty
+# value, unlike an unset one, wins over that default.
 if [[ -z "${FLASHINFER_DISABLE_JIT-}" ]]; then
-  unset FLASHINFER_DISABLE_JIT
+  export FLASHINFER_DISABLE_JIT=""
 fi
 
 # Same assertion tuned/run_gb10.sh makes (see _check_flash_attn_ptx_compat
