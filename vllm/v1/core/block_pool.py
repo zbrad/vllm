@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+import os
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
@@ -27,6 +28,7 @@ from vllm.v1.core.kv_cache_utils import (
     resolve_block_hashes,
     to_event_extra_keys,
 )
+from vllm.v1.core.extendible_block_hash_map import ExtendibleBlockHashMap
 from vllm.v1.request import Request
 
 logger = init_logger(__name__)
@@ -97,6 +99,13 @@ class BlockHashToBlockMap:
             blocks[block.block_id] = block
         else:
             self._unexpected_blocks_type(blocks)
+
+    def insert_if_missing(
+        self, key: BlockHashWithGroupId, block: KVCacheBlock
+    ) -> KVCacheBlock | None:
+        """Inserts the block; this map keeps duplicates, so it never refuses."""
+        self.insert(key, block)
+        return block
 
     def pop(self, key: BlockHashWithGroupId, block_id: int) -> KVCacheBlock | None:
         """Checks if block_hash exists and pop block_id from the cache"""
@@ -178,7 +187,9 @@ class BlockPool:
         self.free_block_queue = FreeKVCacheBlockQueue(self.blocks)
 
         # Cache for block lookup
-        self.cached_block_hash_to_block: BlockHashToBlockMap = BlockHashToBlockMap()
+        self.cached_block_hash_to_block: (
+            BlockHashToBlockMap | ExtendibleBlockHashMap
+        ) = self._make_block_hash_index()
         self.cached_block_hashes_by_block: dict[int, set[BlockHashWithGroupId]] = {}
 
         # To represent a placeholder block with block_id=0.
@@ -194,6 +205,14 @@ class BlockPool:
         # Callbacks for blocks released with ``unpin_blocks`` whose contents
         # are still being read until the pool reuses them.
         self._reuse_watchers: dict[int, Callable[[KVCacheBlock], None]] = {}
+
+    @staticmethod
+    def _make_block_hash_index() -> BlockHashToBlockMap | ExtendibleBlockHashMap:
+        # Research switch: VLLM_PREFIX_INDEX=extendible selects the
+        # extendible-hash index (one block per key, first writer wins).
+        if os.environ.get("VLLM_PREFIX_INDEX") == "extendible":
+            return ExtendibleBlockHashMap()
+        return BlockHashToBlockMap()
 
     def get_cached_block(
         self, block_hash: BlockHash, kv_cache_group_ids: list[int]
@@ -637,13 +656,19 @@ class BlockPool:
         ):
             return
 
+        indexed = self.cached_block_hash_to_block.insert_if_missing(
+            block_hash_with_group_id, block
+        )
+        if indexed is not block:
+            # Another block holds the key (or the index is full): stay unindexed.
+            return
+
         if block.block_hash is None:
             block.set_block_hash(block_hash_with_group_id, num_tokens=num_tokens)
         else:
             self.cached_block_hashes_by_block.setdefault(block.block_id, set()).add(
                 block_hash_with_group_id
             )
-        self.cached_block_hash_to_block.insert(block_hash_with_group_id, block)
 
     def move_block_hashes(
         self,
@@ -848,7 +873,7 @@ class BlockPool:
             return False
 
         # Remove all hashes so that no new blocks will hit.
-        self.cached_block_hash_to_block = BlockHashToBlockMap()
+        self.cached_block_hash_to_block = self._make_block_hash_index()
         self.cached_block_hashes_by_block.clear()
         if self._reuse_watchers:
             self._notify_reuse(
