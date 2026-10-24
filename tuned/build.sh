@@ -67,7 +67,7 @@ if [[ "${GPU_TUNED_NEEDS_PREBUILT_DEPS}" == "true" ]]; then
 
     echo "Validating installed build-info stamps carry provenance for this variant"
     # Fatal on purpose: a missing or wrong stamp means an unstamped producer wheel or a wrong install.
-    TORCH_CUDA_SO="$(python3 -c 'import os, torch; print(os.path.join(os.path.dirname(torch.__file__), "lib", "libtorch_cuda.so"))')"
+    TORCH_CUDA_SO="$(python3 -c 'import os, torch; print(os.path.join(os.path.dirname(torch.__file__), "lib", "libtorch_cuda-tuned.so"))')"
     gpu_tuned_verify_build_info "${TORCH_CUDA_SO}" torch "${GPU_TUNED_VARIANT}" pytorch_build_info
     FA2_SO="$(python3 -c 'import os, vllm_flash_attn; print(os.path.join(os.path.dirname(vllm_flash_attn.__file__), "_vllm_fa2_C.abi3.so"))')"
     gpu_tuned_verify_build_info "${FA2_SO}" vllm_flash_attn "${GPU_TUNED_VARIANT}" flash_attn_build_info
