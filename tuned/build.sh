@@ -26,18 +26,8 @@ source "${REPO_ROOT}/tuned/env.sh" "${GPU_TUNED_ARG_VARIANT}"
 command -v python3 &>/dev/null || { echo "ERROR: python3 not found on PATH." >&2; exit 1; }
 
 VENV_DIR="${GPU_TUNED_VENV_DIR}"
-if [[ "${GPU_TUNED_CLEAN_VENV:-}" == "1" && -d "${VENV_DIR}" ]]; then
-    echo "GPU_TUNED_CLEAN_VENV=1: removing ${VENV_DIR} for a clean rebuild"
-    rm -rf "${VENV_DIR}"
-fi
-if [[ -d "${VENV_DIR}" ]]; then
-    # Reusing the venv is the default: the compile is hours, the install is not. Verify it was not copied.
-    gpu_tuned_verify_venv "${VENV_DIR}" "${REPO_ROOT}"
-else
-    python3 -m venv "${VENV_DIR}"
-fi
-# shellcheck source=/dev/null
-source "${VENV_DIR}/bin/activate"
+# Create or reuse (verified), activate, upgrade pip, current setuptools: one shared setup (C9, tuned-common).
+gpu_tuned_setup_build_venv "${VENV_DIR}" "${REPO_ROOT}" || exit 1
 
 echo "=========================================="
 echo "Building vllm for ${GPU_TUNED_HW_LABEL}"
@@ -77,6 +67,9 @@ else
     echo "Installing runtime requirements (setup.py's install_requires)"
     pip install -r requirements/cuda.txt
 fi
+# The current setuptools, installed last (C8, tuned-common): requirements/build/cuda.txt above caps it at <81 and
+# would otherwise leave the build venv on 80.x. wheel.sh builds with --no-isolation, so pyproject's cap is not enforced.
+gpu_tuned_install_setuptools || exit 1
 
 echo ""
 bash "${REPO_ROOT}/tuned/wheel.sh" "${GPU_TUNED_VARIANT}"
