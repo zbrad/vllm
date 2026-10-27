@@ -26,6 +26,8 @@ source "${REPO_ROOT}/tuned/env.sh" "${GPU_TUNED_ARG_VARIANT}"
 
 [[ -d "${GPU_TUNED_VENV_DIR}" ]] || { echo "ERROR: ${GPU_TUNED_VENV_DIR} not found. Run tuned/build.sh ${GPU_TUNED_VARIANT} first." >&2; exit 1; }
 gpu_tuned_verify_venv "${GPU_TUNED_VENV_DIR}" "${REPO_ROOT}"
+# The wheel was built in this venv: its setuptools must meet the common minimum (H10, tuned-common).
+gpu_tuned_check_venv_setuptools "${GPU_TUNED_VENV_DIR}" || exit 1
 # shellcheck source=/dev/null
 source "${GPU_TUNED_VENV_DIR}/bin/activate"
 
@@ -92,6 +94,9 @@ UNPACKED="$(find "${UNPACK_DIR}" -maxdepth 1 -mindepth 1 -type d)"
 STOCK_RE='^lib(c10|c10_cuda|torch|torch_cpu|torch_cuda|torch_cuda_linalg|torch_python|torch_global_deps|caffe2_nvrtc|shm)\.so(\.[0-9]+)*$'
 leaks="$(find "${UNPACKED}" -type f -name '*.so*' -exec basename {} \; | grep -E "${STOCK_RE}" || true)"
 [[ -z "${leaks}" ]] || { echo "ERROR: the wheel ships shared objects under stock torch names: ${leaks}" >&2; exit 1; }
+
+# Dependency audit of the wheel's resolved runtime deps (H9, tuned-common): a vulnerable version with a fix fails.
+gpu_tuned_audit_deps "${BUILT}" "${GPU_TUNED_BUILD_ROOT}/dependency-audit.log" || { echo "ERROR: dependency audit failed (see above and ${GPU_TUNED_BUILD_ROOT}/dependency-audit.log)." >&2; exit 1; }
 
 STAMP_LIBS=("${UNPACKED}/vllm/_C_stable_libtorch.abi3.so" "${UNPACKED}/vllm/_moe_C_stable_libtorch.abi3.so")
 # vllm_flash_attn comes from the prebuilt zbrad/flash-attention-vllm wheel, not from this build, so it is checked here but
