@@ -70,6 +70,24 @@ echo "installing $(basename "${WHEEL}") into the build venv (--no-deps)"
 
 # Where the wheel's compiled extensions load from, and the device-code checks, from an empty directory.
 SITE_DIR="$(cd "${TESTDIR}" && "${PY}" -I -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+
+# The wheel under test must carry the flag package.sh will bake into the shipped wheel, or vllm's own guard
+# (CudaExt.check_flash_attn_ptx_compat) refuses to start the engine whenever the build's CUDA is newer than the driver's
+# PTX support. Same condition as package.sh: the prebuilt _vllm_fa2_C has device code for the arch and no PTX.
+FA2_SO="${SITE_DIR}/vllm/vllm_flash_attn/_vllm_fa2_C.abi3.so"
+FLAGS_PY="${SITE_DIR}/vllm/ext/tuned_flags.py"
+if [[ -f "${FA2_SO}" && -f "${FLAGS_PY}" ]]; then
+    gpu_tuned_so_has_device_code "${FA2_SO}" && gpu_tuned_verify_arch "${FA2_SO}" "${GPU_TUNED_TORCH_ARCH}" \
+        || { echo "ERROR: the installed _vllm_fa2_C has no device code for ${GPU_TUNED_TORCH_ARCH}." >&2; exit 1; }
+    FA2_PTX="$(cuobjdump --list-ptx "${FA2_SO}" 2>&1)" \
+        || { echo "ERROR: cuobjdump --list-ptx failed on the installed _vllm_fa2_C: ${FA2_PTX}" >&2; exit 1; }
+    [[ -z "$(printf '%s\n' "${FA2_PTX}" | grep -oE 'sm_[0-9]+[a-z]?' || true)" ]] \
+        || { echo "ERROR: the installed _vllm_fa2_C embeds PTX: ${FA2_PTX}" >&2; exit 1; }
+    sed -i 's/^    FLASH_ATTN_FA2_NATIVE_ONLY: bool = False$/    FLASH_ATTN_FA2_NATIVE_ONLY: bool = True/' "${FLAGS_PY}"
+    grep -q '^    FLASH_ATTN_FA2_NATIVE_ONLY: bool = True$' "${FLAGS_PY}" \
+        || { echo "ERROR: could not set FLASH_ATTN_FA2_NATIVE_ONLY in the installed tuned_flags.py." >&2; exit 1; }
+    echo "OK: installed _vllm_fa2_C is native-only; FLASH_ATTN_FA2_NATIVE_ONLY set in the installed copy, as package.sh does for the shipped wheel"
+fi
 {
     echo "vllm tuned test run -- variant=${GPU_TUNED_VARIANT} cuda=${CUDA_VER} (${CUDA_TAG})"
     echo "started: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
