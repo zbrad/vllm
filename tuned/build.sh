@@ -60,7 +60,8 @@ if [[ "${GPU_TUNED_NEEDS_PREBUILT_DEPS}" == "true" ]]; then
     TORCH_CUDA_SO="$(python3 -c 'import os, torch; print(os.path.join(os.path.dirname(torch.__file__), "lib", "libtorch_cuda-tuned.so"))')"
     gpu_tuned_verify_build_info "${TORCH_CUDA_SO}" torch "${GPU_TUNED_VARIANT}" pytorch_build_info
     FA2_SO="$(python3 -c 'import os, vllm_flash_attn; print(os.path.join(os.path.dirname(vllm_flash_attn.__file__), "_vllm_fa2_C.abi3.so"))')"
-    gpu_tuned_verify_build_info "${FA2_SO}" vllm_flash_attn "${GPU_TUNED_VARIANT}" flash_attn_build_info
+    # The flash-attention-vllm wheels from 20261028.0 on carry the JSON stamp (.tuned_build_info); the legacy section is emptied.
+    gpu_tuned_verify_build_info_json "${FA2_SO}" "variant=${GPU_TUNED_VARIANT}" || exit 1
 else
     echo "Installing build-time requirements (cmake, ninja, setuptools-rust, ...)"
     pip install -r requirements/build/cuda.txt
