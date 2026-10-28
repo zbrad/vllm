@@ -6,6 +6,6 @@ tblib==3.1.0
 pillow==13.0.0
 transformers==5.19.0
 huggingface-hub==1.31.0
-numpy==2.2.6
+numpy==2.4.6  # upstream pins 2.2.6, which has no cp314 wheel: pip built it from source against the host libopenblas, so import numpy broke when that package was removed. 2.4.6 is a binary wheel and satisfies ml-dtypes (>=2.3.0 on 3.14).
 pyyaml==6.0.2
 requests==2.34.2
