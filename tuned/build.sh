@@ -46,6 +46,10 @@ if [[ "${GPU_TUNED_NEEDS_PREBUILT_DEPS}" == "true" ]]; then
     grep -v '^torch' requirements/build/cuda.txt | pip install -r /dev/stdin
     echo "Installing GB10 requirements (torch @ URL, flashinfer, etc.)"
     pip install -r requirements/gb10.txt
+    # numpy as a binary wheel only: for Python 3.14 numpy 2.2.x has no wheel, so pip builds it from source against whatever
+    # BLAS the host has (libopenblas.so.0), and the venv breaks when that package is removed. 2.3 or newer is what
+    # ml_dtypes requires on 3.14 anyway.
+    pip install --only-binary=:all: --upgrade "numpy>=2.3"
     echo "Installing prebuilt vllm_flash_attn wheel (native sm_121, no PTX, no FA3)"
     # --no-deps: its own metadata pins the stock torch it was built against, not the GB10 torch above.
     pip install --no-deps "${GPU_TUNED_FLASH_ATTN_WHEEL_URL}"
