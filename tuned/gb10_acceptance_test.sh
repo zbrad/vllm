@@ -111,6 +111,7 @@ MODELS=(
   "silence09/DeepSeek-V4-Pro-Tiny:fp8_ds_mla::bad-checkpoint:DeepSeek-V4 MLA (Pro-Tiny, second stand-in for cross-check)"
   "yujiepan/qwen2-vl-tiny-random:::deps-gap-torchvision:Qwen2-VL (tiny-random, vision-language path + qwen_vl_triton_warmup torchvision guard)"
   "yujiepan/deepseek-v3-tiny-random:::mla-dims-too-small:DeepSeek-V3 MLA (tiny-random, BF16, closes the MLA-attention coverage gap)"
+  "yujiepan/muse-spark-open-tiny-random:::trtllm-moe-sm100-only:Muse Spark (tiny-random, BF16, stand-in for Muse-Spark-Open-816B-A42B)"
 )
 
 # Known, confirmed reasons DeepSeek-V4 can't run on this stack today --
@@ -141,6 +142,21 @@ MODELS=(
 #     ("No valid MLA prefill backend found"). A real-scale DeepSeek-V3
 #     checkpoint would use supported dims -- this is an artifact of
 #     shrinking the model too far, not a stack regression.
+#   trtllm-moe-sm100-only: Muse Spark's NVIDIA MoE runs only on flashinfer's
+#     TRT-LLM fused MoE outside Hopper (vllm/models/muse_spark/nvidia/
+#     muse_moe_runner.py: BF16 experts are hard-coded to FLASHINFER_TRTLLM and
+#     ignore --moe-backend; NVFP4 raises NotImplementedError for any other
+#     backend, and vLLM picks FLASHINFER_CUTLASS for NVFP4 on GB10). flashinfer
+#     builds that module (fused_moe_trtllm_sm100) only for sm100/sm103/sm107,
+#     so the sm121a jit-cache has none. Upstream gap, not a stack regression:
+#     its open fallback PR (vllm #62064) still routes capability >= 10.0,
+#     including sm12x, to TRT-LLM. Tried 2026-11-02: this stand-in loads and
+#     fails in the TRT-LLM weight-layout conversion (its MoE hidden size 4 is
+#     below the 128-wide block, so it would fail even with the kernel);
+#     IlyasMoutawwakil/tiny-random-Muse-Spark-NVFP4 (config lacks
+#     num_shared_experts) and trl-internal-testing/tiny-MuseSparkFor
+#     ConditionalGeneration ("requires one RoPE theta per layer") do not load.
+#     Revisit if upstream adds an sm12x MoE route for Muse Spark.
 
 declare -a RESULTS=()
 FAILED=0
