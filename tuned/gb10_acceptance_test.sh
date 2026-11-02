@@ -170,7 +170,10 @@ for entry in "${MODELS[@]}"; do
     "kv_cache_dtype=${kv_cache_dtype:-auto} mamba_backend=${mamba_backend:-triton}"
   echo "=========================================="
 
-  if "${TUNED_PYTHON}" -I -c "
+  # Run from / : vllm's model-registry check spawns `python -m vllm.model_executor.models.registry`, which inherits the
+  # cwd and (as -m) puts it on sys.path; with the repo root as cwd that child imported the source tree and its stale
+  # in-tree extensions (vllm/*.so) instead of the installed wheel.
+  if (cd / && "${TUNED_PYTHON}" -I -c "
 from vllm import LLM, SamplingParams
 
 kwargs = {}
@@ -190,7 +193,7 @@ out = llm.generate(['Hello, my name is'], sp)
 text = out[0].outputs[0].text
 assert text, 'empty generation output'
 print(f'ACCEPTANCE_OK: ${model_id}: {text!r}')
-"; then
+"); then
     RESULTS+=("PASS  ${model_id}  (${label})")
   else
     RESULTS+=("FAIL  ${model_id}  (${label})")
