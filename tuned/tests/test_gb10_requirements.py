@@ -20,7 +20,7 @@ SUBSTITUTED = {"torch", "flashinfer-python"}
 # the reason in gb10.txt.
 OMITTED = {"torchaudio", "torchvision", "torchcodec", "pynvvideocodec", "instanttensor"}
 # Only in gb10.txt on purpose.
-EXTRA = {"flashinfer-jit-cache"}
+EXTRA = {"flashinfer-jit-cache", "flashinfer-jit-cache-sm121a"}
 
 PIN = re.compile(r"^([A-Za-z0-9_.\-]+)(\[[^\]]*\])?\s*(.*)$")
 
