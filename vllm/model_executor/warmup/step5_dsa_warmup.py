@@ -21,7 +21,13 @@ logger = init_logger(__name__)
 
 
 def _step5_dsa_impl(worker: "Worker"):
-    from vllm.models.step5.nvidia.sparse_attention import Step5DSAAttentionImpl
+    try:
+        from vllm.models.step5.nvidia.sparse_attention import Step5DSAAttentionImpl
+    except ImportError:
+        # gb10: step5's model/processor code eagerly imports torchvision (not
+        # installed on GB10), though this warmup is a no-op for every other
+        # model -- don't let a missing optional dependency break warmup for them.
+        return None
 
     context = worker.vllm_config.compilation_config.static_forward_context
     for layer in context.values():
