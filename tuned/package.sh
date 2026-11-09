@@ -147,7 +147,13 @@ if [[ "${GPU_TUNED_VARIANT}" == "gb10" ]]; then
     grep -q '^    FLASHINFER_DISABLE_JIT: bool = True$' "${FLAGS_PY}" \
         || { echo "ERROR: could not set FLASHINFER_DISABLE_JIT in tuned_flags.py." >&2; exit 1; }
 fi
-echo "OK: tuned_flags.py written: $(grep -E '^    (FLASH_ATTN_FA2_NATIVE_ONLY|FLASHINFER_DISABLE_JIT):' "${FLAGS_PY}" | sed 's/^ *//' | paste -sd' ' -)"
+if [[ "${GPU_TUNED_VARIANT}" == "rtx40" ]]; then
+    # Single-GPU consumer card: vLLM's single-rank NCCL groups cost about 3 GiB of 24 GiB with NCCL's default channels.
+    sed -i 's/^    NCCL_SINGLE_RANK_FEW_CHANNELS: bool = False$/    NCCL_SINGLE_RANK_FEW_CHANNELS: bool = True/' "${FLAGS_PY}"
+    grep -q '^    NCCL_SINGLE_RANK_FEW_CHANNELS: bool = True$' "${FLAGS_PY}" \
+        || { echo "ERROR: could not set NCCL_SINGLE_RANK_FEW_CHANNELS in tuned_flags.py." >&2; exit 1; }
+fi
+echo "OK: tuned_flags.py written: $(grep -E '^    (FLASH_ATTN_FA2_NATIVE_ONLY|FLASHINFER_DISABLE_JIT|NCCL_SINGLE_RANK_FEW_CHANNELS):' "${FLAGS_PY}" | sed 's/^ *//' | paste -sd' ' -)"
 
 python3 -m wheel pack "${UNPACKED}" --dest-dir "${GPU_TUNED_DIST_DIR}"
 WHEEL="${GPU_TUNED_DIST_DIR}/${BUILT_NAME}"

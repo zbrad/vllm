@@ -497,6 +497,21 @@ class Worker(WorkerBase):
 
             current_platform.check_if_supports_dtype(self.model_config.dtype)
 
+            # zbrad/vllm tuned-builds: before the first NCCL communicator exists, so
+            # NCCL reads it. See TunedFlags.NCCL_SINGLE_RANK_FEW_CHANNELS.
+            from vllm.ext.tuned_flags import TunedFlags
+
+            if (
+                TunedFlags.NCCL_SINGLE_RANK_FEW_CHANNELS
+                and self.parallel_config.world_size_across_dp == 1
+                and "NCCL_MAX_NCHANNELS" not in os.environ
+            ):
+                os.environ["NCCL_MAX_NCHANNELS"] = "2"
+                logger.info_once(
+                    "Single-rank job: set NCCL_MAX_NCHANNELS=2 (tuned-build default; "
+                    "set NCCL_MAX_NCHANNELS to override)."
+                )
+
             # Initialize the distributed environment BEFORE taking
             # memory snapshot
             # This ensures NCCL buffers are allocated before we measure
