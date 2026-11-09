@@ -102,6 +102,9 @@ export VLLM_FLASH_ATTN_NO_PTX="${VLLM_FLASH_ATTN_NO_PTX-1}"
 # allocate a 95 GiB KV cache for a 4B model with a 512-token context, which exhausted the pool: the driver reported
 # NV_ERR_NO_MEMORY, nvidia-smi hung, and the node's gb10-health-gate rebooted the machine (2026-10-19, mid-test). These
 # stand-ins need weights (the NVFP4 30B MoE is the largest, about 18 GiB) plus a few GiB; 0.30 is about 36 GiB.
+# rtx40 is a discrete 24 GiB card (RTX 4090), not a shared pool: 0.30 would be about 7 GiB, below the largest stand-in.
+# 0.80 (about 19 GiB) leaves room for the Windows desktop on the same GPU under WSL2.
+[[ "${GPU_TUNED_VARIANT:-}" == "rtx40" ]] && ACCEPT_GPU_MEM_UTIL="${ACCEPT_GPU_MEM_UTIL:-0.80}"
 ACCEPT_GPU_MEM_UTIL="${ACCEPT_GPU_MEM_UTIL:-0.30}"
 
 MODELS=(
