@@ -63,3 +63,12 @@ tokenspeed-mla==2.0.3; platform_system == "Linux"
 
 # Humming kernels for quantization gemm
 humming-kernels[cu13]==0.1.19
+# humming-kernels[cu13] requires nvidia-cuda-runtime and nvidia-cuda-nvcc with no version, so a fresh resolve takes
+# the newest (13.5.37 since November 2026) and the process then maps two different libcudart.so.13, the pip copy and
+# the CUDA 13.4 toolkit's; the rtx40 smoke test refused exactly that. Pin the pip CUDA components to the toolkit this
+# build uses (cu134): 13.4.92, the set the gb10 build venv resolved before 13.5 existed.
+nvidia-cuda-runtime==13.4.92
+nvidia-cuda-nvcc==13.4.92
+nvidia-cuda-nvrtc==13.4.92
+nvidia-nvvm==13.4.92
+nvidia-cuda-crt==13.4.92

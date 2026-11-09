@@ -1,8 +1,8 @@
-"""requirements/gb10.txt must not drift from upstream's requirements/cuda.txt.
+"""requirements/gb10.txt and requirements/rtx40.txt must not drift from upstream's requirements/cuda.txt.
 
-gb10.txt is cuda.txt with the GB10 substitutions applied (torch, flashinfer, and the packages that have no GB10
-build). An upstream merge moves the cuda.txt pins; a pin left behind in gb10.txt broke the worker at start-up once
-(humming-kernels 0.1.12 against a vllm that needs 0.1.17). This test fails on any pin that differs or is missing
+Each is cuda.txt with the variant's substitutions applied (torch, flashinfer, and the packages that have no build for
+the tuned torch). An upstream merge moves the cuda.txt pins; a pin left behind in gb10.txt broke the worker at start-up
+once (humming-kernels 0.1.12 against a vllm that needs 0.1.17). These tests fail on any pin that differs or is missing
 without being named below.
 
 Run from the repo root:
@@ -12,15 +12,23 @@ Run from the repo root:
 import re
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Substituted on purpose: gb10.txt points these at the zbrad GB10 wheels (see the header of gb10.txt).
+# Substituted on purpose: each file points these at the zbrad wheels for its variant (see the file's header).
 SUBSTITUTED = {"torch", "flashinfer-python"}
-# Omitted on purpose: no GB10 build exists for these, so a pin would not match the tuned torch. Add one here only with
-# the reason in gb10.txt.
+# Omitted on purpose: no build against the tuned torch exists for these, so a pin would not match it. Add one here only
+# with the reason in the requirements file.
 OMITTED = {"torchaudio", "torchvision", "torchcodec", "pynvvideocodec", "instanttensor"}
-# Only in gb10.txt on purpose.
-EXTRA = {"flashinfer-jit-cache", "flashinfer-jit-cache-sm121a"}
+# The pip CUDA components, pinned to the cu134 toolkit in both files (humming-kernels[cu13] leaves them unversioned).
+CUDA_COMPONENTS = {"nvidia-cuda-runtime", "nvidia-cuda-nvcc", "nvidia-cuda-nvrtc", "nvidia-nvvm", "nvidia-cuda-crt"}
+# Only in the variant's file on purpose.
+EXTRA = {
+    "gb10": {"flashinfer-jit-cache", "flashinfer-jit-cache-sm121a"} | CUDA_COMPONENTS,
+    "rtx40": set(CUDA_COMPONENTS),
+}
+VARIANTS = sorted(EXTRA)
 
 PIN = re.compile(r"^([A-Za-z0-9_.\-]+)(\[[^\]]*\])?\s*(.*)$")
 
@@ -43,30 +51,36 @@ class Gb10Requirements:
         return pins
 
 
-def test_gb10_pins_match_cuda_pins_except_the_declared_ones() -> None:
+@pytest.mark.parametrize("variant", VARIANTS)
+def test_variant_pins_match_cuda_pins_except_the_declared_ones(variant: str) -> None:
     cuda = Gb10Requirements.read_pins(REPO_ROOT / "requirements" / "cuda.txt")
-    gb10 = Gb10Requirements.read_pins(REPO_ROOT / "requirements" / "gb10.txt")
+    pins = Gb10Requirements.read_pins(REPO_ROOT / "requirements" / f"{variant}.txt")
     drifted = sorted(
-        f"{name}: cuda.txt {cuda[name]!r} vs gb10.txt {gb10[name]!r}"
+        f"{name}: cuda.txt {cuda[name]!r} vs {variant}.txt {pins[name]!r}"
         for name in cuda
-        if name in gb10 and name not in SUBSTITUTED and cuda[name] != gb10[name]
+        if name in pins and name not in SUBSTITUTED and cuda[name] != pins[name]
     )
-    assert not drifted, "gb10.txt pins differ from cuda.txt:\n  " + "\n  ".join(drifted)
+    assert not drifted, f"{variant}.txt pins differ from cuda.txt:\n  " + "\n  ".join(drifted)
 
 
-def test_every_cuda_requirement_is_in_gb10_or_declared_omitted() -> None:
+@pytest.mark.parametrize("variant", VARIANTS)
+def test_every_cuda_requirement_is_in_the_variant_or_declared_omitted(variant: str) -> None:
     cuda = Gb10Requirements.read_pins(REPO_ROOT / "requirements" / "cuda.txt")
-    gb10 = Gb10Requirements.read_pins(REPO_ROOT / "requirements" / "gb10.txt")
-    missing = sorted(name for name in cuda if name not in gb10 and name not in OMITTED)
-    assert (
-        not missing
-    ), f"cuda.txt requires {missing}, which gb10.txt neither pins nor declares omitted"
+    pins = Gb10Requirements.read_pins(REPO_ROOT / "requirements" / f"{variant}.txt")
+    missing = sorted(name for name in cuda if name not in pins and name not in OMITTED)
+    assert not missing, f"cuda.txt requires {missing}, which {variant}.txt neither pins nor declares omitted"
 
 
-def test_gb10_only_requirements_are_declared() -> None:
+@pytest.mark.parametrize("variant", VARIANTS)
+def test_variant_only_requirements_are_declared(variant: str) -> None:
     cuda = Gb10Requirements.read_pins(REPO_ROOT / "requirements" / "cuda.txt")
+    pins = Gb10Requirements.read_pins(REPO_ROOT / "requirements" / f"{variant}.txt")
+    extra = sorted(name for name in pins if name not in cuda and name not in EXTRA[variant])
+    assert not extra, f"{variant}.txt has {extra}, which cuda.txt does not and this test does not declare"
+
+
+def test_both_variants_pin_the_same_cuda_component_versions() -> None:
     gb10 = Gb10Requirements.read_pins(REPO_ROOT / "requirements" / "gb10.txt")
-    extra = sorted(name for name in gb10 if name not in cuda and name not in EXTRA)
-    assert (
-        not extra
-    ), f"gb10.txt has {extra}, which cuda.txt does not and this test does not declare"
+    rtx40 = Gb10Requirements.read_pins(REPO_ROOT / "requirements" / "rtx40.txt")
+    differ = sorted(name for name in CUDA_COMPONENTS if gb10.get(name) != rtx40.get(name) or not gb10.get(name))
+    assert not differ, f"the CUDA component pins differ between gb10.txt and rtx40.txt (or are missing): {differ}"
