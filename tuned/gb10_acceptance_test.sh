@@ -102,10 +102,24 @@ export VLLM_FLASH_ATTN_NO_PTX="${VLLM_FLASH_ATTN_NO_PTX-1}"
 # allocate a 95 GiB KV cache for a 4B model with a 512-token context, which exhausted the pool: the driver reported
 # NV_ERR_NO_MEMORY, nvidia-smi hung, and the node's gb10-health-gate rebooted the machine (2026-10-19, mid-test). These
 # stand-ins need weights (the NVFP4 30B MoE is the largest, about 18 GiB) plus a few GiB; 0.30 is about 36 GiB.
-# rtx40 is a discrete 24 GiB card (RTX 4090), not a shared pool: 0.30 would be about 7 GiB, below the largest stand-in.
-# 0.80 (about 19 GiB) leaves room for the Windows desktop on the same GPU under WSL2.
-[[ "${GPU_TUNED_VARIANT:-}" == "rtx40" ]] && ACCEPT_GPU_MEM_UTIL="${ACCEPT_GPU_MEM_UTIL:-0.80}"
+# rtx40 is a discrete 24 GiB card (RTX 4090), not a shared pool, and the NVFP4 30B stand-in's weights take 18.22 GiB.
+# Three settings make it fit (measured on an RTX 4090 under WSL2, 2026-11-09; at 0.80 its KV cache was -0.71 GiB):
+#   - NCCL_MAX_NCHANNELS=2: vLLM creates the world group and a group per parallel dimension (TP, PP, DP, PCP, EP,
+#     ETP, ...), each an NCCL communicator even with one rank. Each cost 0.38-0.51 GiB of NCCL buffers with the default
+#     channel count (world + 6 groups: 2.78 GiB); with 2 channels, 0.24 GiB in total. Free memory at engine start went
+#     from 19.27 to 22.18 GiB. A single-rank communicator moves nothing between GPUs, so its channel count is unused.
+#   - a 0.90 share (about 21.6 GiB): the NVFP4 stand-in's KV cache is then 1.29 GiB. About 2 GiB stays free for the
+#     Windows desktop, which shares the GPU under WSL2 (0.5 GiB in use at idle).
+#   - max_num_seqs=64: the NVFP4 NemotronH stand-in has 129 Mamba cache blocks at that share, and each decoding
+#     sequence needs one, so vLLM's default of 256 refuses to start.
+if [[ "${GPU_TUNED_VARIANT:-}" == "rtx40" ]]; then
+  export NCCL_MAX_NCHANNELS="${NCCL_MAX_NCHANNELS:-2}"
+  ACCEPT_GPU_MEM_UTIL="${ACCEPT_GPU_MEM_UTIL:-0.90}"
+  ACCEPT_MAX_NUM_SEQS="${ACCEPT_MAX_NUM_SEQS:-64}"
+fi
 ACCEPT_GPU_MEM_UTIL="${ACCEPT_GPU_MEM_UTIL:-0.30}"
+# Empty means vLLM's own default (gb10).
+ACCEPT_MAX_NUM_SEQS="${ACCEPT_MAX_NUM_SEQS:-}"
 
 MODELS=(
   "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16::::NemotronH (dense, stand-in for Nemotron-3-Super-120B)"
@@ -198,6 +212,8 @@ from vllm import LLM, SamplingParams
 kwargs = {}
 if '${mamba_backend}':
     kwargs['mamba_backend'] = '${mamba_backend}'
+if '${ACCEPT_MAX_NUM_SEQS}':
+    kwargs['max_num_seqs'] = int('${ACCEPT_MAX_NUM_SEQS}')
 
 llm = LLM(
     model='${model_id}',
