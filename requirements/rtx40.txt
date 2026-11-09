@@ -1,0 +1,40 @@
+# RTX 4080/4090 (Ada Lovelace, x86_64, compute capability 8.9) tuned build.
+# The same shape as requirements/gb10.txt: cuda.txt's torch/flashinfer pins are replaced by the fork's
+# GitHub-Release wheels, which tuned/build.sh rtx40 installs before the vLLM build (setup.py reads this file
+# as requirements/<GPU_TUNED_VARIANT>.txt when VLLM_GB10_BUILD is set).
+#
+# flash-attention is NOT listed here, as in gb10.txt: it is the prebuilt vllm_flash_attn wheel named by
+# GPU_TUNED_FLASH_ATTN_WHEEL_URL in tuned/repo.env, consumed through the VLLM_FLASH_ATTN_PREBUILT_PKG path.
+
+# Common dependencies
+-r common.txt
+
+numba == 0.65.0 # Required for N-gram speculative decoding
+
+torch @ https://github.com/zbrad/pytorch/releases/download/v2.15.0%2Brtx40.cu134.20261109.0/torch-2.15.0%2Brtx40.cu134.20261109.0-cp314-cp314-linux_x86_64.whl
+# torchaudio, torchvision and torchcodec are omitted, as in gb10.txt: the PyPI builds are made against a
+# different torch (cuda.txt's 2.14.0), and none has been built against this one.
+
+# zbrad/flashinfer 0.7.3 rtx40: the python wheel only. rtx40 ships no AOT jit-cache, so flashinfer's kernels
+# JIT-compile on first use (needs a CUDA toolkit and ninja; see that release's notes), and tuned/package.sh
+# does not set FLASHINFER_DISABLE_JIT for rtx40. cuda.txt and gb10.txt still pin 0.7.2.post1.
+flashinfer-python @ https://github.com/zbrad/flashinfer/releases/download/v0.7.3%2Brtx40.cu134.20261109.0/flashinfer_python-0.7.3%2Brtx40.cu134.20261109.0-py3-none-any.whl
+apache-tvm-ffi==0.1.11
+tilelang==0.1.12
+# >=1.31.0 keeps execution plans alive for the CUDA graphs recorded from them
+# (NVIDIA/cudnn-frontend#1195); older versions can replay an unloaded kernel.
+nvidia-cudnn-frontend>=1.31.0
+# Required for LLM_NVTX_SCOPES_FOR_PROFILING=1
+nvtx==0.2.15
+# Required for faster safetensors model loading
+fastsafetensors >= 0.3.3
+
+# QuACK and Cutlass DSL for FA4 (cute-DSL implementation)
+nvidia-cutlass-dsl[cu13]==4.8.0
+quack-kernels==0.6.5  # Required by MSA
+
+# Tokenspeed_MLA for faster mla with spec decode
+tokenspeed-mla==2.0.3; platform_system == "Linux"
+
+# Humming kernels for quantization gemm
+humming-kernels[cu13]==0.1.19

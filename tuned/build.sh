@@ -42,17 +42,17 @@ pip install --upgrade pip
 pip install build wheel
 
 if [[ "${GPU_TUNED_NEEDS_PREBUILT_DEPS}" == "true" ]]; then
-    # torch comes from requirements/gb10.txt (a pinned zbrad/pytorch wheel), so the cuda.txt pin is dropped.
+    # torch comes from requirements/<variant>.txt (a pinned zbrad/pytorch wheel), so the cuda.txt pin is dropped.
     grep -v '^torch' requirements/build/cuda.txt | pip install -r /dev/stdin
-    echo "Installing GB10 requirements (torch @ URL, flashinfer, etc.)"
-    pip install -r requirements/gb10.txt
-    echo "Installing prebuilt vllm_flash_attn wheel (native sm_121, no PTX, no FA3)"
-    # --no-deps: its own metadata pins the stock torch it was built against, not the GB10 torch above.
+    echo "Installing ${GPU_TUNED_VARIANT} requirements (torch @ URL, flashinfer, etc.)"
+    pip install -r "requirements/${GPU_TUNED_VARIANT}.txt"
+    echo "Installing prebuilt vllm_flash_attn wheel (native ${GPU_TUNED_TORCH_ARCH}, no PTX, no FA3)"
+    # --no-deps: its own metadata pins the stock torch it was built against, not the tuned torch above.
     pip install --no-deps "${GPU_TUNED_FLASH_ATTN_WHEEL_URL}"
 
     echo "Auditing already-installed tuned packages"
     # Non-fatal: surfaces a stock torch or flashinfer that replaced a tuned one before the build relies on it.
-    gpu_tuned_audit_pinned pip torch=gb10 vllm_flash_attn=gb10 flashinfer-python=gb10
+    gpu_tuned_audit_pinned pip "torch=${GPU_TUNED_VARIANT}" "vllm_flash_attn=${GPU_TUNED_VARIANT}" "flashinfer-python=${GPU_TUNED_VARIANT}"
     gpu_tuned_audit_stray pip flashinfer-cubin
 
     echo "Validating installed build-info stamps carry provenance for this variant"

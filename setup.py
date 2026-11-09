@@ -1515,8 +1515,11 @@ def get_requirements() -> list[str]:
         # of cuda.txt's PyPI pins, since no official aarch64/sm_121 build of
         # either exists upstream yet. flash-attention is intentionally not
         # listed here -- see cmake/external_projects/vllm_flash_attn.cmake's
-        # VLLM_FLASH_ATTN_PREBUILT_PKG path.
-        requirements = _read_requirements("gb10.txt")
+        # VLLM_FLASH_ATTN_PREBUILT_PKG path. Other prebuilt-dependency variants
+        # (rtx40) use the same path with their own requirements/<variant>.txt;
+        # tuned/env.sh exports GPU_TUNED_VARIANT alongside VLLM_GB10_BUILD.
+        variant = os.environ.get("GPU_TUNED_VARIANT", "gb10")
+        requirements = _read_requirements(f"{variant}.txt")
     elif _is_cuda():
         requirements = _read_requirements("cuda.txt")
         cuda_major, cuda_minor = torch.version.cuda.split(".")
