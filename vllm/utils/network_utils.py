@@ -173,8 +173,9 @@ def get_tcp_uri(ip: str, port: int) -> str:
 
 
 def get_open_zmq_ipc_path() -> str:
-    if sys.platform == "win32":
-        # libzmq has no ipc:// transport on Windows; use a loopback TCP port.
+    if not zmq.has("ipc"):
+        # pyzmq's PyPI Windows wheels are built without ipc:// (pyzmq#1981); a
+        # source build has it (libzmq AF_UNIX). Without it, use loopback TCP.
         return get_tcp_uri(get_loopback_ip(), get_open_port())
     base_rpc_path = envs.VLLM_RPC_BASE_PATH
     return f"ipc://{base_rpc_path}/{uuid4()}"

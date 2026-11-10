@@ -3,6 +3,7 @@
 
 import contextlib
 import os
+import socket
 import sys
 import threading
 import weakref
@@ -25,6 +26,7 @@ from vllm.ray.ray_env import get_env_vars_to_copy
 from vllm.utils import numa_utils
 from vllm.utils.network_utils import (
     ZmqListener,
+    get_loopback_ip,
     get_open_zmq_ipc_path,
     get_tcp_uri,
     make_zmq_listener,
@@ -1121,6 +1123,7 @@ class CoreEngineActorManager:
 def get_engine_zmq_bind_addresses(
     vllm_config: VllmConfig,
     num_api_servers: int = 1,
+    python_listeners: bool = False,
 ) -> EngineZmqBindAddresses:
     """Create ZMQ endpoint templates for engine-client communication.
 
@@ -1153,6 +1156,10 @@ def get_engine_zmq_bind_addresses(
 
     def _addr() -> str:
         if client_local_only:
+            if python_listeners and not hasattr(socket, "AF_UNIX"):
+                # make_zmq_listener binds these with a Python socket, and
+                # Python on Windows has no AF_UNIX: use loopback TCP.
+                return get_tcp_uri(get_loopback_ip(), 0)
             return get_open_zmq_ipc_path()
         return get_tcp_uri(host, 0)
 
@@ -1170,6 +1177,7 @@ def bind_engine_zmq_listeners(
     bind_addresses = get_engine_zmq_bind_addresses(
         vllm_config,
         num_api_servers,
+        python_listeners=True,
     )
     inputs: list[ZmqListener] = []
     outputs: list[ZmqListener] = []
