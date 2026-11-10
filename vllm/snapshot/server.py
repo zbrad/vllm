@@ -243,7 +243,7 @@ async def run_vllm_snapshot_child(control: ControlArgs, args: Any) -> None:
 def main(argv: list[str] | None = None) -> None:
     control, remaining = parse_control_args(sys.argv[1:] if argv is None else argv)
     args = parse_vllm_args(remaining)
-    import uvloop
+    from vllm.utils import uvloop_compat as uvloop
 
     uvloop.run(run_vllm_snapshot_child(control, args))
 

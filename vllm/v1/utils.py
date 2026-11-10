@@ -23,7 +23,7 @@ from typing import (
 )
 
 import torch
-import uvloop
+from vllm.utils import uvloop_compat as uvloop
 from torch.autograd.profiler import record_function
 
 import vllm.envs as envs

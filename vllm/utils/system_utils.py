@@ -150,6 +150,9 @@ def _maybe_force_spawn():
     if in_wsl():
         reasons.append("WSL is detected and NVML is not compatible with fork")
 
+    if sys.platform == "win32":
+        reasons.append("Windows has no fork start method")
+
     if reasons:
         logger.warning(
             "We must use the `spawn` multiprocessing start method. "

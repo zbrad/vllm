@@ -202,7 +202,7 @@ async def run_server_worker(
 
 
 def main():
-    import uvloop
+    from vllm.utils import uvloop_compat as uvloop
 
     from vllm.entrypoints.common.cli_args import (
         make_arg_parser,

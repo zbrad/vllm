@@ -19,7 +19,7 @@ from multiprocessing.process import BaseProcess
 import aiohttp
 import psutil
 import uvicorn
-import uvloop
+from vllm.utils import uvloop_compat as uvloop
 from fastapi import FastAPI, Response
 
 import vllm.envs as envs

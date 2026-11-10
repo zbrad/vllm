@@ -4,7 +4,7 @@
 import argparse
 import inspect
 
-import uvloop
+from vllm.utils import uvloop_compat as uvloop
 
 from vllm.entrypoints.cli.types import CLISubcommand
 from vllm.entrypoints.common.cli_args import (

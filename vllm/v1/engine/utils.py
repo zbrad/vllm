@@ -3,6 +3,7 @@
 
 import contextlib
 import os
+import sys
 import threading
 import weakref
 from collections.abc import Callable, Iterator, Sequence
@@ -1421,23 +1422,41 @@ def wait_for_engine_startup(
         and not parallel_config.data_parallel_external_lb
     )
 
+    # On Windows a process sentinel is a process handle, which zmq_poll rejects
+    # ("not a socket"): poll the handshake socket alone, with a short period, and
+    # check the watched processes' exit codes after each poll instead.
+    poll_sentinels = sys.platform != "win32"
+    poll_period_ms = STARTUP_POLL_PERIOD_MS if poll_sentinels else 1000
+
     # 1. Engine processes
-    if isinstance(launch.engine_manager, CoreEngineProcManager):
+    if poll_sentinels and isinstance(launch.engine_manager, CoreEngineProcManager):
         for sentinel in launch.engine_manager.sentinels():
             poller.register(sentinel, zmq.POLLIN)
     # 2. DP Coordinator process, if present
     coord_process = launch.coordinator.proc if launch.coordinator else None
-    if coord_process is not None:
+    if poll_sentinels and coord_process is not None:
         poller.register(coord_process.sentinel, zmq.POLLIN)
     # 3. Watched frontend processes, if any
     frontend_process_by_fd: dict[int, FrontendProcess] = {}
     for proc in launch.watched_frontend_processes:
         fd = proc.sentinel if isinstance(proc.sentinel, int) else proc.sentinel.fileno()
         frontend_process_by_fd[fd] = proc
-        poller.register(fd, zmq.POLLIN)
+        if poll_sentinels:
+            poller.register(fd, zmq.POLLIN)
 
     while any(conn_pending) or any(start_pending):
-        events = poller.poll(STARTUP_POLL_PERIOD_MS)
+        events = poller.poll(poll_period_ms)
+        if not poll_sentinels and (
+            (
+                isinstance(launch.engine_manager, CoreEngineProcManager)
+                and launch.engine_manager.finished_procs()
+            )
+            or (coord_process is not None and coord_process.exitcode is not None)
+            or any(p.exitcode is not None for p in launch.watched_frontend_processes)
+        ):
+            # Stands in for the sentinel event: routes to the "process exited"
+            # branch below, which reads the exit codes itself.
+            events = [*events, (None, zmq.POLLIN)]
         if not events:
             if any(conn_pending):
                 logger.debug(

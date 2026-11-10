@@ -9,6 +9,7 @@ import glob
 import hashlib
 import json
 import os
+import posixpath
 import sys
 import tempfile
 import threading
@@ -470,7 +471,8 @@ def download_weights_from_hf(
         try:
             fs = hf_fs()
             file_list = fs.ls(
-                os.path.join(model_name_or_path, subfolder or ""),
+                # A Hub path, not a local one: "/" on every OS.
+                posixpath.join(model_name_or_path, subfolder or ""),
                 detail=False,
                 revision=revision,
             )

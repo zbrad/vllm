@@ -106,7 +106,7 @@ async def run_launch_fastapi(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
-    import uvloop
+    from vllm.utils import uvloop_compat as uvloop
 
     from vllm.entrypoints.common.cli_args import (
         make_arg_parser,

@@ -5,7 +5,7 @@ import argparse
 import signal
 import time
 
-import uvloop
+from vllm.utils import uvloop_compat as uvloop
 
 import vllm
 import vllm.envs as envs
