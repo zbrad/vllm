@@ -16,6 +16,21 @@
 #include "selective_scan.h"
 #include "../dispatch_utils.h"
 
+// Raise a kernel's dynamic shared memory limit to kSmemSize bytes. Kept out of
+// the VLLM_STABLE_DISPATCH_BOOL arguments in selective_scan_fwd_launch: a
+// preprocessor directive inside macro arguments is undefined behavior, and
+// MSVC's conforming preprocessor rejects it.
+template<typename KernelT>
+void set_max_dynamic_smem(KernelT kernel, int kSmemSize) {
+#ifdef USE_ROCM
+    STD_CUDA_CHECK(hipFuncSetAttribute(
+        reinterpret_cast<const void*>(kernel), hipFuncAttributeMaxDynamicSharedMemorySize, kSmemSize));
+#else
+    STD_CUDA_CHECK(cudaFuncSetAttribute(
+        kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kSmemSize));
+#endif
+}
+
 template<int kNThreads_, int kNItems_, int kNRows_, bool kIsEvenLen_,
          bool kIsVariableB_, bool kIsVariableC_,
          bool kHasZ_, bool kVarlen_, typename input_t_, typename weight_t_, typename state_t_>
@@ -406,13 +421,7 @@ void selective_scan_fwd_launch(SSMParamsBase &params, cudaStream_t stream) {
                 dim3 grid(params.batch, params.dim / kNRows);
                 auto kernel = &selective_scan_fwd_kernel<Ktraits>;
                 if (kSmemSize >= 48 * 1024) {
-#ifdef USE_ROCM
-                    STD_CUDA_CHECK(hipFuncSetAttribute(
-                        reinterpret_cast<const void*>(kernel), hipFuncAttributeMaxDynamicSharedMemorySize, kSmemSize));
-#else
-                    STD_CUDA_CHECK(cudaFuncSetAttribute(
-                        kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kSmemSize));
-#endif
+                    set_max_dynamic_smem(kernel, kSmemSize);
                 }
                 kernel<<<grid, Ktraits::kNThreads, kSmemSize, stream>>>(params);
                 STD_CUDA_KERNEL_LAUNCH_CHECK();

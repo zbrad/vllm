@@ -657,6 +657,31 @@ struct TopkConstants {
     __VA_ARGS__                                                                \
   }
 
+// Launch a gating kernel: on CUDA with programmatic stream serialization
+// (cudaLaunchKernelEx), on ROCm with a plain launch. Kept out of the
+// DISPATCH_HASH argument in topkGatingSoftplusSqrtLauncherHelper: a
+// preprocessor directive inside macro arguments is undefined behavior, and
+// MSVC's conforming preprocessor rejects it.
+template <typename KernelT, typename... Args>
+void launch_topk_softplus_sqrt(KernelT* kernel, int num_blocks, dim3 block_dim,
+                               cudaStream_t stream, Args... args) {
+#ifndef USE_ROCM
+  cudaLaunchConfig_t config = {};
+  config.gridDim = num_blocks;
+  config.blockDim = block_dim;
+  config.dynamicSmemBytes = 0;
+  config.stream = stream;
+  cudaLaunchAttribute attrs[1];
+  attrs[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
+  attrs[0].val.programmaticStreamSerializationAllowed = 1;
+  config.numAttrs = 1;
+  config.attrs = attrs;
+  cudaLaunchKernelEx(&config, kernel, args...);
+#else
+  kernel<<<num_blocks, block_dim, 0, stream>>>(args...);
+#endif
+}
+
 template <int EXPERTS, int WARPS_PER_TB, int WARP_SIZE_PARAM,
           int MAX_BYTES_PER_LDG, typename IndType, typename HashIndType,
           typename InputType>
@@ -682,28 +707,11 @@ void topkGatingSoftplusSqrtLauncherHelper(
         &topkGatingSoftplusSqrt<VPT, EXPERTS, WARPS_PER_TB, BYTES_PER_LDG,
                                 WARP_SIZE_PARAM, USE_HASH, IndType, HashIndType,
                                 InputType>;
-#ifndef USE_ROCM
-    cudaLaunchConfig_t config = {};
-    config.gridDim = num_blocks;
-    config.blockDim = block_dim;
-    config.dynamicSmemBytes = 0;
-    config.stream = stream;
-    cudaLaunchAttribute attrs[1];
-    attrs[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
-    attrs[0].val.programmaticStreamSerializationAllowed = 1;
-    config.numAttrs = 1;
-    config.attrs = attrs;
-    cudaLaunchKernelEx(&config, kernel, input, finished, output, num_rows,
-                       indices, source_row, k, start_expert, end_expert,
-                       renormalize, routed_scaling_factor, correction_bias,
-                       input_ids, tid2eid, is_padding, bias_vl,
-                       image_sentinel_lo);
-#else
-    kernel<<<num_blocks, block_dim, 0, stream>>>(
-        input, finished, output, num_rows, indices, source_row, k, start_expert,
-        end_expert, renormalize, routed_scaling_factor, correction_bias,
-        input_ids, tid2eid, is_padding, bias_vl, image_sentinel_lo);
-#endif
+    launch_topk_softplus_sqrt(kernel, num_blocks, block_dim, stream, input,
+                              finished, output, num_rows, indices, source_row,
+                              k, start_expert, end_expert, renormalize,
+                              routed_scaling_factor, correction_bias, input_ids,
+                              tid2eid, is_padding, bias_vl, image_sentinel_lo);
   })
 }
 

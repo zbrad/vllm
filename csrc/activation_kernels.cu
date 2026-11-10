@@ -1164,6 +1164,47 @@ void masked_moe_activation(
 
 #undef LAUNCH_MASKED_ACT_AND_MUL
 #undef LAUNCH_MASKED_ACTIVATION
+
+namespace vllm {
+// Launches the pipelined SITU kernel when it applies (CUDA, 16-bit input, the
+// Kimi-K3 w2 shape and betas) and returns true; returns false to request the
+// generic scalar kernel. Kept out of the VLLM_STABLE_DISPATCH_* macro arguments
+// in situ_and_mul_quant: a preprocessor directive inside macro arguments is
+// undefined behavior, and MSVC's conforming preprocessor rejects it.
+template <typename scalar_t, typename fp8_t, int GRID_DIM>
+inline bool try_launch_situ_pipelined(fp8_t* out, float* scale,
+                                      const scalar_t* input, int d, float beta,
+                                      float linear_beta, int64_t num_tokens,
+                                      const int32_t* num_valid_tokens_ptr,
+                                      int64_t topk, dim3 grid,
+                                      cudaStream_t stream) {
+#ifndef USE_ROCM
+  // The pipelined kernel's float2-per-lane geometry assumes a
+  // 32-lane warp (GROUP_SIZE == 4 * WARP_SIZE); on HIP (64-lane)
+  // fall back to the WARP_SIZE-generic scalar kernel.
+  constexpr int THREADS = 256;
+  constexpr int SITU_D = 3072;  // Kimi-K3 fused w2 input dim
+  if constexpr (sizeof(scalar_t) == 2) {
+    if (d == SITU_D && beta == SITU_BETA && linear_beta == SITU_LINEAR_BETA) {
+      constexpr int D = SITU_D;
+      constexpr int GROUP_STAGES = 4;
+      constexpr int NUM_WARPS = THREADS / 32;
+      constexpr int STAGE_ELTS = 2 * 128;
+      dim3 block(THREADS);
+      size_t smem_bytes =
+          (size_t)NUM_WARPS * GROUP_STAGES * STAGE_ELTS * sizeof(scalar_t);
+      situ_and_mul_quant_group_pipelined_kernel<scalar_t, fp8_t, THREADS,
+                                                GROUP_STAGES, 128, GRID_DIM, D>
+          <<<grid, block, smem_bytes, stream>>>(
+              out, scale, input, num_tokens, num_valid_tokens_ptr, topk);
+      return true;
+    }
+  }
+#endif
+  return false;
+}
+}  // namespace vllm
+
 // Fused SITU activation and block-FP8 quantization for Humming w2.
 // `num_valid_tokens` is the int32 DeepEP token count (psum[-1]); rows = it *
 // `topk`, so padding is excluded on-device and skipped rows receive scale 1.
@@ -1231,33 +1272,14 @@ void situ_and_mul_quant(torch::stable::Tensor& out,    // [..., d]  (fp8)
         input.scalar_type(), "situ_and_mul_quant_group_kernel", [&] {
           VLLM_STABLE_DISPATCH_FP8_TYPES(
               out.scalar_type(), "situ_and_mul_quant_group_kernel_fp8", [&] {
-#ifndef USE_ROCM
-                // The pipelined kernel's float2-per-lane geometry assumes a
-                // 32-lane warp (GROUP_SIZE == 4 * WARP_SIZE); on HIP (64-lane)
-                // fall back to the WARP_SIZE-generic scalar kernel.
-                constexpr int THREADS = 256;
-                constexpr int SITU_D = 3072;  // Kimi-K3 fused w2 input dim
-                if constexpr (sizeof(scalar_t) == 2) {
-                  if (d == SITU_D && (float)beta == vllm::SITU_BETA &&
-                      (float)linear_beta == vllm::SITU_LINEAR_BETA) {
-                    constexpr int D = SITU_D;
-                    constexpr int GROUP_STAGES = 4;
-                    constexpr int NUM_WARPS = THREADS / 32;
-                    constexpr int STAGE_ELTS = 2 * 128;
-                    dim3 block(THREADS);
-                    size_t smem_bytes = (size_t)NUM_WARPS * GROUP_STAGES *
-                                        STAGE_ELTS * sizeof(scalar_t);
-                    vllm::situ_and_mul_quant_group_pipelined_kernel<
-                        scalar_t, fp8_t, THREADS, GROUP_STAGES, 128, GRID_DIM,
-                        D><<<grid, block, smem_bytes, stream>>>(
+                if (vllm::try_launch_situ_pipelined<scalar_t, fp8_t, GRID_DIM>(
                         out.mutable_data_ptr<fp8_t>(),
                         scale.mutable_data_ptr<float>(),
-                        input.const_data_ptr<scalar_t>(), num_tokens,
-                        num_valid_tokens_ptr, topk);
-                    return;
-                  }
+                        input.const_data_ptr<scalar_t>(), d, (float)beta,
+                        (float)linear_beta, num_tokens, num_valid_tokens_ptr,
+                        topk, grid, stream)) {
+                  return;
                 }
-#endif
                 const int num_warps = std::min(num_groups, 1024 / WARP_SIZE);
                 dim3 block(num_warps * WARP_SIZE);
                 vllm::situ_and_mul_quant_group_scalar_kernel<scalar_t, fp8_t,
