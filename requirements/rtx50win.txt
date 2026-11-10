@@ -22,6 +22,10 @@ triton-windows == 3.9.0.post30; sys_platform == "win32"
 # (0.1.11/0.1.12: WinError 127 on import). Every tilelang release caps apache-tvm-ffi < 0.1.13, so tilelang (the
 # mhc kernels only) is left out on Windows; xgrammar is on the import path of every engine start.
 apache-tvm-ffi==0.1.13.post3
+
+# pyzmq with libzmq's ipc:// (AF_UNIX) transport on Windows: the zbrad/pyzmq +ipc build. PyPI's Windows wheels are
+# built without it (pyzmq#1981), and vLLM then falls back to loopback TCP for the engine sockets (zmq.has("ipc")).
+pyzmq @ https://github.com/zbrad/pyzmq/releases/download/v27.3.0%2Bipc.20261110.0/pyzmq-27.3.0%2Bipc.20261110.0-cp312-abi3-win_amd64.whl ; sys_platform == "win32"
 # >=1.31.0 keeps execution plans alive for the CUDA graphs recorded from them
 # (NVIDIA/cudnn-frontend#1195); older versions can replay an unloaded kernel.
 nvidia-cudnn-frontend>=1.31.0
