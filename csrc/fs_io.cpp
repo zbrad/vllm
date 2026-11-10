@@ -5,7 +5,21 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
+#if defined(_WIN32)
+  // zbrad windows-dev: the POSIX-named open/read/write/close/unlink/access come
+  // from the UCRT's <io.h>; ssize_t from <BaseTsd.h>. O_BINARY: the default text
+  // mode would translate newline bytes inside the stored blocks.
+  #include <io.h>
+  #include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+  #ifndef F_OK
+    #define F_OK 0
+  #endif
+constexpr int kBinaryFlag = O_BINARY;
+#else
+  #include <unistd.h>
+constexpr int kBinaryFlag = 0;
+#endif
 
 #include <filesystem>
 #include <string>
@@ -49,7 +63,8 @@ inline int _store_block(const char* tmp_path, const char* dest_path,
 
   const int o_direct_flag = use_o_direct ? kODirectFlag : 0;
   const int fd = open(
-      tmp_path, O_CREAT | O_EXCL | O_WRONLY | O_TRUNC | o_direct_flag, 0644);
+      tmp_path, O_CREAT | O_EXCL | O_WRONLY | O_TRUNC | o_direct_flag | kBinaryFlag,
+      0644);
   if (fd < 0) {
     return errno;
   }
@@ -91,7 +106,7 @@ inline int _store_block(const char* tmp_path, const char* dest_path,
 inline int _load_block(const char* source_path, char* dst, size_t size,
                        bool use_o_direct) {
   const int o_direct_flag = use_o_direct ? kODirectFlag : 0;
-  const int fd = open(source_path, O_RDONLY | o_direct_flag, 0);
+  const int fd = open(source_path, O_RDONLY | o_direct_flag | kBinaryFlag, 0);
   if (fd < 0) {
     return errno;
   }

@@ -80,6 +80,12 @@ extern "C" {
 
 #include <sys/types.h>
 
+#if defined(_WIN32)
+  // zbrad windows-dev: MSVC has no ssize_t.
+  #include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#endif
+
 char error_msg[10240];  // 10KB buffer to store error messages
 CUresult no_error = CUresult(0);
 CUresult error_code = no_error;  // store error code

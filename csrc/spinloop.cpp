@@ -10,7 +10,28 @@ extern "C" {
   #include <x86intrin.h>
 #endif
 
-#if defined(CLOCK_MONOTONIC_RAW)
+#if defined(_WIN32)
+  // zbrad windows-dev: no clock_gettime on MSVC. A monotonic replacement from
+  // QueryPerformanceCounter; the clock id is ignored. struct timespec is in the UCRT's time.h.
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #include <windows.h>
+  #define TIMEOUT_CLOCK 0
+static int vllm_win_clock_gettime(int /*clock_id*/, struct timespec* ts) {
+  static LARGE_INTEGER freq = {0};
+  if (freq.QuadPart == 0) {
+    QueryPerformanceFrequency(&freq);
+  }
+  LARGE_INTEGER count;
+  QueryPerformanceCounter(&count);
+  ts->tv_sec = (time_t)(count.QuadPart / freq.QuadPart);
+  ts->tv_nsec =
+      (long)((count.QuadPart % freq.QuadPart) * 1000000000LL / freq.QuadPart);
+  return 0;
+}
+  #define clock_gettime vllm_win_clock_gettime
+#elif defined(CLOCK_MONOTONIC_RAW)
   #define TIMEOUT_CLOCK CLOCK_MONOTONIC_RAW
 #else
   #define TIMEOUT_CLOCK CLOCK_MONOTONIC
