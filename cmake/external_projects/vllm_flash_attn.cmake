@@ -70,6 +70,12 @@ if(VLLM_FLASH_ATTN_PREBUILT_PKG)
       "flash_attn package (needed for the FA4 cute/ tree) is not importable.")
   endif()
 
+  # Forward slashes (zbrad windows-dev): both directories are written into the
+  # generated cmake_install.cmake, where a Windows path's backslashes are parsed
+  # as escapes ('\p'); the REGEX patterns below also expect '/'. No-op on POSIX.
+  file(TO_CMAKE_PATH "${VLLM_FLASH_ATTN_PKG_DIR}" VLLM_FLASH_ATTN_PKG_DIR)
+  file(TO_CMAKE_PATH "${FLASH_ATTN_PKG_DIR}" FLASH_ATTN_PKG_DIR)
+
   message(STATUS "vllm-flash-attn: using prebuilt package at ${VLLM_FLASH_ATTN_PKG_DIR}")
 
   # No compilation happens in this branch -- these are no-op targets, matching
@@ -97,6 +103,8 @@ if(VLLM_FLASH_ATTN_PREBUILT_PKG)
     FILES_MATCHING
     PATTERN "*.py"
     PATTERN "*.so"
+    # Windows extension modules (zbrad windows-dev): _vllm_fa2_C.pyd.
+    PATTERN "*.pyd"
     REGEX "/vllm_flash_attn/__init__\\.py$" EXCLUDE
     REGEX "/vllm_flash_attn/flash_attn_interface\\.py$" EXCLUDE
   )
@@ -107,6 +115,22 @@ if(VLLM_FLASH_ATTN_PREBUILT_PKG)
   # unrewritten `flash_attn.cute.*` imports inside these files resolve --
   # the same mechanism the VLLM_FLASH_ATTN_SRC_DIR local-dev path below uses.
   add_custom_target(_vllm_fa4_cutedsl_C)
+  if(WIN32)
+    # zbrad windows-dev: a directory symlink needs privilege on Windows, and a wheel cannot carry one anyway.
+    # Copy the tree and rewrite flash_attn.cute imports, the same transform the FetchContent path below uses.
+    install(CODE "
+      file(GLOB_RECURSE CUTE_PY_FILES \"${FLASH_ATTN_PKG_DIR}/cute/*.py\")
+      foreach(SRC_FILE \${CUTE_PY_FILES})
+        file(RELATIVE_PATH REL_PATH \"${FLASH_ATTN_PKG_DIR}/cute\" \${SRC_FILE})
+        set(DST_FILE \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn/cute/\${REL_PATH}\")
+        get_filename_component(DST_DIR \${DST_FILE} DIRECTORY)
+        file(MAKE_DIRECTORY \${DST_DIR})
+        file(READ \${SRC_FILE} FILE_CONTENTS)
+        string(REPLACE \"flash_attn.cute\" \"vllm.vllm_flash_attn.cute\" FILE_CONTENTS \"\${FILE_CONTENTS}\")
+        file(WRITE \${DST_FILE} \"\${FILE_CONTENTS}\")
+      endforeach()
+    " COMPONENT _vllm_fa4_cutedsl_C)
+  else()
   install(CODE "
     set(LINK_TARGET \"${FLASH_ATTN_PKG_DIR}/cute\")
     set(LINK_NAME \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn/cute\")
@@ -114,6 +138,7 @@ if(VLLM_FLASH_ATTN_PREBUILT_PKG)
     file(REMOVE_RECURSE \"\${LINK_NAME}\")
     file(CREATE_LINK \"\${LINK_TARGET}\" \"\${LINK_NAME}\" SYMBOLIC)
   " COMPONENT _vllm_fa4_cutedsl_C)
+  endif()
 
 else()
   if(VLLM_FLASH_ATTN_SRC_DIR)

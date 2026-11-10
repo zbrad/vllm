@@ -103,6 +103,14 @@ def is_metadata_only_build() -> bool:
 if sys.platform.startswith("darwin") and VLLM_TARGET_DEVICE != "cpu":
     logger.warning("VLLM_TARGET_DEVICE automatically set to `cpu` due to macOS")
     VLLM_TARGET_DEVICE = "cpu"
+elif (
+    sys.platform == "win32"
+    and VLLM_TARGET_DEVICE == "cuda"
+    and torch.version.cuda is not None
+):
+    # zbrad windows-dev: native Windows (MSVC) CUDA build. Without this branch the
+    # next one sets VLLM_TARGET_DEVICE="empty" and every CUDA extension is skipped.
+    logger.warning("Native Windows CUDA build (zbrad windows-dev, experimental)")
 elif not (sys.platform.startswith("linux") or sys.platform.startswith("darwin")):
     logger.warning(
         "vLLM only supports Linux platform (including WSL) and MacOS."
@@ -297,11 +305,13 @@ class cmake_build_ext(build_ext):
 
         # Pass the python executable to cmake so it can find an exact
         # match.
-        cmake_args += [f"-DVLLM_PYTHON_EXECUTABLE={sys.executable}"]
+        # as_posix(): cmake/utils.cmake's find_python_from_executable is a macro, so a
+        # Windows path's backslashes are re-parsed as escapes ('\p'); unchanged on POSIX.
+        cmake_args += [f"-DVLLM_PYTHON_EXECUTABLE={Path(sys.executable).as_posix()}"]
 
         # Pass the python path to cmake so it can reuse the build dependencies
         # on subsequent calls to python.
-        cmake_args += ["-DVLLM_PYTHON_PATH={}".format(":".join(sys.path))]
+        cmake_args += ["-DVLLM_PYTHON_PATH={}".format(os.pathsep.join(sys.path))]
 
         # Override the base directory for FetchContent downloads to $ROOT/.deps
         # This allows sharing dependencies between profiles,
@@ -330,7 +340,12 @@ class cmake_build_ext(build_ext):
             build_tool = []
         # Make sure we use the nvcc from CUDA_HOME
         if _is_cuda() and CUDA_HOME is not None:
-            cmake_args += [f"-DCMAKE_CUDA_COMPILER={CUDA_HOME}/bin/nvcc"]
+            # Windows needs the full file name (nvcc.exe): torch's enable_language(CUDA)
+            # rejects a path that is not an existing file.
+            nvcc_name = "nvcc.exe" if sys.platform == "win32" else "nvcc"
+            cmake_args += [
+                f"-DCMAKE_CUDA_COMPILER={Path(CUDA_HOME).as_posix()}/bin/{nvcc_name}"
+            ]
         elif _is_hip() and ROCM_HOME is not None:
             cmake_args += [f"-DROCM_PATH={ROCM_HOME}"]
 
@@ -1624,8 +1639,12 @@ if _is_cuda():
         # DeepSelect requires CUDA 12.9 or later (SM100a/SM103a only)
         # Optional since it won't build on unsupported architectures
         ext_modules.append(CMakeExtension(name="vllm._deepselect_C", optional=True))
-    if USE_PRECOMPILED_EXTENSIONS or (
-        CUDA_HOME and get_nvcc_cuda_version() >= Version("12.0")
+    # zbrad windows-dev: CMakeLists.txt does not include flashkda, qutlass or DeepGEMM under
+    # MSVC (not ported yet), so their targets must not be requested on Windows.
+    _skip_unported_on_windows = sys.platform == "win32"
+    if not _skip_unported_on_windows and (
+        USE_PRECOMPILED_EXTENSIONS
+        or (CUDA_HOME and get_nvcc_cuda_version() >= Version("12.0"))
     ):
         ext_modules.append(CMakeExtension(name="vllm._flashkda_C", optional=True))
     if envs.VLLM_USE_PRECOMPILED or (
@@ -1633,8 +1652,9 @@ if _is_cuda():
     ):
         # DeepGEMM requires CUDA 12.3+ (SM90/SM100)
         # Optional since it won't build on unsupported architectures
-        ext_modules.append(CMakeExtension(name="vllm._deep_gemm_C", optional=True))
-        ext_modules.append(CMakeExtension(name="vllm._qutlass_C", optional=True))
+        if not _skip_unported_on_windows:
+            ext_modules.append(CMakeExtension(name="vllm._deep_gemm_C", optional=True))
+            ext_modules.append(CMakeExtension(name="vllm._qutlass_C", optional=True))
     # fmha_sm100 is a Python/CuTe-DSL package installed into vllm.third_party.
     ext_modules.append(CMakeExtension(name="vllm.fmha_sm100", optional=True))
     # tml-fa4 is copied into an isolated vllm.third_party package.

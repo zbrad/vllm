@@ -265,6 +265,56 @@ if(NVCC_THREADS AND VLLM_GPU_LANG STREQUAL "CUDA")
 endif()
 
 #
+# MSVC (native Windows build, zbrad windows-dev), the same settings as zbrad/flash-attention-vllm windows-dev:
+# a conforming __cplusplus (CUTLASS gates its C++17 paths on it) and the standard preprocessor (CUDA 13's CCCL
+# rejects the traditional one) for the host compiler of .cpp and .cu sources; _USE_MATH_DEFINES for M_* constants;
+# and drop torch's MSVC-only `--Werror cross-execution-space-call` (Caffe2/public/cuda.cmake), which Linux never
+# sees and which turns CUTLASS's host-device memsetDevice() into an error.
+#
+if(MSVC)
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>" "$<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>")
+  if(VLLM_GPU_LANG STREQUAL "CUDA")
+    list(APPEND VLLM_GPU_FLAGS "-Xcompiler=/Zc:__cplusplus" "-Xcompiler=/Zc:preprocessor")
+  endif()
+  add_compile_definitions(_USE_MATH_DEFINES)
+  string(REPLACE " --Werror cross-execution-space-call" "" CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS}")
+
+  # NVIDIA Bug 7071816 (also NVIDIA/cutlass#3878): with /Zc:__cplusplus, cuda.h gives CUtensorMap
+  # alignas(128), and nvcc's MSVC host stub (cudafe1.stub.c) then fails C2719 for every kernel that takes a
+  # TMA descriptor by value (the sm120 CUTLASS FP8/FP4 GEMMs). Workaround: a copy of this toolkit's cuda.h
+  # with CUtensorMap_st aligned to 64 under _MSC_VER, put ahead of the toolkit include dir. The shared
+  # toolkit is never edited. Written only when its content changes, so reconfiguring does not touch every
+  # CUDA object's dependency.
+  if(VLLM_GPU_LANG STREQUAL "CUDA")
+    set(_vllm_cuda_h "${CUDA_TOOLKIT_ROOT_DIR}/include/cuda.h")
+    set(_vllm_cuda_h_overlay_dir "${CMAKE_BINARY_DIR}/cuda_h_overlay")
+    file(READ "${_vllm_cuda_h}" _vllm_cuda_h_text)
+    set(_vllm_cuda_h_struct "typedef struct CUtensorMap_st {")
+    string(FIND "${_vllm_cuda_h_text}" "${_vllm_cuda_h_struct}" _vllm_struct_pos)
+    string(FIND "${_vllm_cuda_h_text}" "alignas(128)" _vllm_alignas_pos)
+    if(_vllm_struct_pos EQUAL -1 OR _vllm_alignas_pos EQUAL -1)
+      message(FATAL_ERROR "cuda.h overlay: ${_vllm_cuda_h} no longer has the expected CUtensorMap_st text; "
+                          "re-check NVIDIA Bug 7071816 for this CUDA version")
+    endif()
+    string(REPLACE "${_vllm_cuda_h_struct}"
+      "#if defined(_MSC_VER)\n#define TENSOR_MAP_ALIGN 64\n#else\n#define TENSOR_MAP_ALIGN 128\n#endif\n${_vllm_cuda_h_struct}"
+      _vllm_cuda_h_text "${_vllm_cuda_h_text}")
+    string(REPLACE "alignas(128)" "alignas(TENSOR_MAP_ALIGN)" _vllm_cuda_h_text "${_vllm_cuda_h_text}")
+    string(REPLACE "_Alignas(128)" "_Alignas(TENSOR_MAP_ALIGN)" _vllm_cuda_h_text "${_vllm_cuda_h_text}")
+    set(_vllm_cuda_h_overlay "${_vllm_cuda_h_overlay_dir}/cuda.h")
+    set(_vllm_cuda_h_old "")
+    if(EXISTS "${_vllm_cuda_h_overlay}")
+      file(READ "${_vllm_cuda_h_overlay}" _vllm_cuda_h_old)
+    endif()
+    if(NOT _vllm_cuda_h_old STREQUAL _vllm_cuda_h_text)
+      file(WRITE "${_vllm_cuda_h_overlay}" "${_vllm_cuda_h_text}")
+    endif()
+    list(PREPEND VLLM_GPU_FLAGS "-I${_vllm_cuda_h_overlay_dir}")
+    message(STATUS "cuda.h overlay (NVIDIA Bug 7071816): ${_vllm_cuda_h_overlay}")
+  endif()
+endif()
+
+#
 # Set compression mode for CUDA >=13.x.
 #
 if(VLLM_GPU_LANG STREQUAL "CUDA" AND
@@ -277,9 +327,11 @@ endif()
 # Set CUDA include flags for CXX compiler.
 #
 if(VLLM_GPU_LANG STREQUAL "CUDA")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${CUDA_TOOLKIT_ROOT_DIR}/include")
+  # Quoted: on Windows the toolkit lives under "C:/Program Files/...", and an unquoted
+  # path is split at the spaces into separate source-file arguments (zbrad windows-dev).
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I\"${CUDA_TOOLKIT_ROOT_DIR}/include\"")
   if(CUDA_VERSION VERSION_GREATER_EQUAL 13.0)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${CUDA_TOOLKIT_ROOT_DIR}/include/cccl")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I\"${CUDA_TOOLKIT_ROOT_DIR}/include/cccl\"")
   endif()
 endif()
 
@@ -514,6 +566,14 @@ if(VLLM_GPU_LANG STREQUAL "CUDA" OR VLLM_GPU_LANG STREQUAL "HIP")
 
     # Set CUTLASS_REVISION. Used for FetchContent. Also fixes some bogus messages when building.
     set(CUTLASS_REVISION "v4.7.1")
+    # zbrad windows-dev: MSVC rejects CuTe's cute/stride.hpp in C++20 mode (C3545) in every CUTLASS release up
+    # to v4.8.1; the fix (e16e870bcd, d968159959) is only on main. Pin MSVC builds to that main commit, the
+    # same one zbrad/flash-attention-vllm windows-dev pins. A commit hash needs GIT_SHALLOW FALSE (see below).
+    set(VLLM_CUTLASS_GIT_SHALLOW TRUE)
+    if(MSVC)
+      set(CUTLASS_REVISION "b2f249acd20392beeb16f5e5a31f4f1a4e38b3bd")
+      set(VLLM_CUTLASS_GIT_SHALLOW FALSE)
+    endif()
 
     # Use the specified CUTLASS source directory for compilation if VLLM_CUTLASS_SRC_DIR is provided
     if (DEFINED ENV{VLLM_CUTLASS_SRC_DIR})
@@ -537,7 +597,7 @@ if(VLLM_GPU_LANG STREQUAL "CUDA" OR VLLM_GPU_LANG STREQUAL "HIP")
           # Speed up CUTLASS download by retrieving only the specified GIT_TAG instead of the history.
           # Important: If GIT_SHALLOW is enabled then GIT_TAG works only with branch names and tags.
           # So if the GIT_TAG above is updated to a commit hash, GIT_SHALLOW must be set to FALSE
-          GIT_SHALLOW TRUE
+          GIT_SHALLOW ${VLLM_CUTLASS_GIT_SHALLOW}
       )
     endif()
     FetchContent_MakeAvailable(cutlass)
@@ -1352,6 +1412,14 @@ if(VLLM_GPU_LANG STREQUAL "CUDA" OR VLLM_GPU_LANG STREQUAL "HIP")
       target_link_libraries(_C_stable_libtorch PRIVATE ${_STABLE_TORCH_AMDHIP64})
     endif()
   endif()
+
+  # MSVC (zbrad windows-dev): the GPTQ kernels call cuBLAS (cublasHgemm). An ELF
+  # shared object may leave that undefined and bind it at load time to the cuBLAS
+  # torch already loaded; a Windows DLL must name the import library at link time.
+  # Imports cublas64_<major>.dll, the same DLL torch's wheel bundles.
+  if(MSVC AND VLLM_GPU_LANG STREQUAL "CUDA")
+    target_link_libraries(_C_stable_libtorch PRIVATE CUDA::cublas)
+  endif()
 endif()
 
 #
@@ -1712,12 +1780,21 @@ endif()
 
 # For CUDA we also build and ship some external projects.
 if (VLLM_GPU_LANG STREQUAL "CUDA")
-    include(cmake/external_projects/deepgemm.cmake)
+    # zbrad windows-dev: DeepGEMM's own setup.py passes GCC flags (/Wno-psabi) to
+    # cl.exe; not ported to MSVC yet. vLLM checks has_deep_gemm() at runtime.
+    if(NOT MSVC)
+      include(cmake/external_projects/deepgemm.cmake)
+    endif()
     include(cmake/external_projects/deepselect.cmake)
     include(cmake/external_projects/fmha_sm100.cmake)
     include(cmake/external_projects/flashmla.cmake)
-    include(cmake/external_projects/flashkda.cmake)
-    include(cmake/external_projects/qutlass.cmake)
+    # zbrad windows-dev: not ported to MSVC yet. flashkda bundles a CUTLASS without
+    # the CuTe C3545 fix; qutlass has GCC-only asm/initializers and an sm100 TMA
+    # gemm that hits nvcc's CUtensorMap C2719 (NVIDIA Bug 7071816).
+    if(NOT MSVC)
+      include(cmake/external_projects/flashkda.cmake)
+      include(cmake/external_projects/qutlass.cmake)
+    endif()
     include(cmake/external_projects/tml_fa4.cmake)
 
     # vllm-flash-attn should be last as it overwrites some CMake functions
