@@ -230,6 +230,10 @@ def decorate_logs(
     set_vllm_process_name(process_name, skip_if_set=skip_if_decorated)
 
 
+# Windows has no SIGKILL; os.kill with SIGTERM there is TerminateProcess.
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
+
+
 def kill_process_tree(pid: int):
     """Kills all descendant processes of the given pid by sending SIGKILL.
 
@@ -253,11 +257,11 @@ def kill_process_tree(pid: int):
                 child.name(),
                 child.pid,
             )
-            os.kill(child.pid, signal.SIGKILL)
+            os.kill(child.pid, _SIGKILL)
 
     # Finally kill the parent
     with contextlib.suppress(ProcessLookupError):
-        os.kill(pid, signal.SIGKILL)
+        os.kill(pid, _SIGKILL)
 
 
 # Resource utilities
