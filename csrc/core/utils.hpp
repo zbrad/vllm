@@ -4,9 +4,34 @@
 #include <cstdint>
 #include <cstdlib>
 
+// Count leading/trailing zero bits of a nonzero 32-bit value. MSVC has no
+// __builtin_clz/__builtin_ctz and its _BitScan* intrinsics are not constexpr,
+// so it gets a plain loop (zbrad windows-dev); GCC/Clang keep the builtins.
+#if defined(_MSC_VER) && !defined(__clang__)
+inline constexpr int vllm_clz32(uint32_t x) {
+  int n = 0;
+  while (!(x & 0x80000000u)) {
+    x <<= 1;
+    ++n;
+  }
+  return n;
+}
+inline constexpr int vllm_ctz32(uint32_t x) {
+  int n = 0;
+  while (!(x & 1u)) {
+    x >>= 1;
+    ++n;
+  }
+  return n;
+}
+#else
+inline constexpr int vllm_clz32(uint32_t x) { return __builtin_clz(x); }
+inline constexpr int vllm_ctz32(uint32_t x) { return __builtin_ctz(x); }
+#endif
+
 inline constexpr uint32_t next_pow_2(uint32_t const num) {
   if (num <= 1) return num;
-  return 1 << (CHAR_BIT * sizeof(num) - __builtin_clz(num - 1));
+  return 1 << (CHAR_BIT * sizeof(num) - vllm_clz32(num - 1));
 }
 
 template <typename A, typename B>

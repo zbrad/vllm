@@ -11,12 +11,9 @@
 
 #ifndef USE_ROCM
   #include <torch/headeronly/util/Float8_e4m3fn.h>
-  #define MAYBE_HOST_DEVICE C10_HOST_DEVICE
 #else
   #include <torch/headeronly/util/Float8_e4m3fn.h>
   #include <torch/headeronly/util/Float8_e4m3fnuz.h>
-  // ROCm doesn't seem to need C10_HOST_DEVICE for static constexpr
-  #define MAYBE_HOST_DEVICE
 #endif
 
 template <typename T,
@@ -38,9 +35,12 @@ struct quant_type_max<torch::headeronly::Float8_e4m3fnuz> {
   }
 };
 
-template <typename T>
-MAYBE_HOST_DEVICE static constexpr T quant_type_max_v =
-    quant_type_max<T>::val();
+// No quant_type_max_v variable template: callers use the constexpr function
+// quant_type_max<T>::val(). nvcc cannot give such a variable the host+device
+// visibility device code needs on Windows ("__host__ does not apply here" on a
+// variable template; "A __device__ variable template cannot have a const
+// qualified type on Windows"), while a constexpr function call works on every
+// platform (zbrad windows-dev).
 
 template <typename T,
           typename = std::enable_if_t<
@@ -49,7 +49,7 @@ template <typename T,
               std::is_same_v<T, int8_t>>>
 struct min_scaling_factor {
   C10_DEVICE C10_ALWAYS_INLINE static float val() {
-    return 1.0f / (quant_type_max_v<T> * 512.0f);
+    return 1.0f / (quant_type_max<T>::val() * 512.0f);
   }
 };
 

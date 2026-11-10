@@ -726,7 +726,13 @@ namespace hist4096 = topk_histogram_4096;
     }                                   \
   }
 
-#define FLASHINFER_INLINE inline __attribute__((always_inline)) __device__
+#if defined(_MSC_VER) && !defined(__clang__)
+  // MSVC has no __attribute__; CUDA's __forceinline__ is the equivalent
+  // (zbrad windows-dev).
+  #define FLASHINFER_INLINE __forceinline__ __device__
+#else
+  #define FLASHINFER_INLINE inline __attribute__((always_inline)) __device__
+#endif
 
 template <typename T, size_t N>
 struct vec_t {

@@ -3,7 +3,6 @@
 import glob
 import itertools
 import os
-import subprocess
 import sys
 
 import jinja2
@@ -166,11 +165,13 @@ OUTPUT_DIR = sys.argv[2] if len(sys.argv) > 2 else os.path.dirname(__file__)
 
 
 def remove_old_kernels():
+    # os.remove instead of `rm -f`, which does not exist on native Windows (zbrad windows-dev).
     for filename in glob.glob(OUTPUT_DIR + "/*kernel_*.cu"):
-        subprocess.call(["rm", "-f", filename])
+        os.remove(filename)
 
     filename = OUTPUT_DIR + "/kernel_selector.h"
-    subprocess.call(["rm", "-f", filename])
+    if os.path.exists(filename):
+        os.remove(filename)
 
 
 def generate_new_kernels():
@@ -265,10 +266,11 @@ def generate_new_kernels():
                 ]
                 conditions = " && ".join(conditions)
 
-                if kernel_selector_str == FILE_HEAD_COMMENT:
-                    kernel_selector_str += f"if ({conditions})\n  kernel = "
-                else:
-                    kernel_selector_str += f"else if ({conditions})\n  kernel = "
+                # A flat list of early returns rather than one if/else-if chain:
+                # MSVC counts each `else if` as a nested block and stops at its
+                # nesting limit (C1061) on chains this long. The selector is
+                # #included inside get_marlin_kernel(); first match still wins.
+                kernel_selector_str += f"if ({conditions})\n  return "
 
                 kernel_template2 = (
                     "Marlin<{{a_type_id}}, {{b_type_id}}, {{c_type_id}}, "
@@ -305,7 +307,7 @@ def generate_new_kernels():
 
     if not SUPPORT_FP8 and kernel_selector_str != FILE_HEAD_COMMENT:
         kernel_selector_str += (
-            "else if (a_type == vllm::kFE4M3fn)\n"
+            "if (a_type == vllm::kFE4M3fn)\n"
             "  STD_TORCH_CHECK(false, "
             '"marlin kernel with fp8 activation is not built.");'
         )

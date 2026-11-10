@@ -25,7 +25,12 @@
 #include "type_convert.cuh"
 #include "dispatch_utils.h"
 
-#define CHECK_TYPE(x, st)                                                  \
+#if defined(_MSC_VER)
+// glibc's <sys/types.h> provides `uint`; MSVC does not (zbrad windows-dev).
+using uint = unsigned int;
+#endif
+
+#define CHECK_TYPE(x, st)                                                \
   STD_TORCH_CHECK(x.scalar_type() == st, #x " dtype is ", x.scalar_type(), \
                   ", while ", st, " is expected")
 #define CHECK_TH_CUDA(x) \

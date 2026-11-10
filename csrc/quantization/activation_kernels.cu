@@ -30,6 +30,14 @@ typedef __hip_fp8x4_e4m3_fnuz __nv_fp8x4_e4m3;
   #endif
 #endif
 
+// A 16-byte unit for shared-memory loads. MSVC has no __int128_t; CUDA's int4
+// has the same size and 16-byte alignment (zbrad windows-dev).
+#if defined(_MSC_VER) && !defined(__clang__)
+using vllm_int128_t = int4;
+#else
+using vllm_int128_t = __int128_t;
+#endif
+
 namespace vllm {
 
 template <typename T>
@@ -295,7 +303,7 @@ __global__ void silu_mul_fp8_quant_deep_gemm_kernel(
   static constexpr int COMPUTE_STAGE_SIZE = 2 * GROUP_SIZE / 4;
   static constexpr int COMPUTE_STAGE_MOD = COMPUTE_STAGE_SIZE * NUM_STAGES;
 
-  extern __shared__ __align__(16) __int128_t smem_128[];
+  extern __shared__ __align__(16) vllm_int128_t smem_128[];
 
   int* s_expert_offsets =
       reinterpret_cast<int*>(smem_128 + (SMEM_SIZE_BYTES_Y / 16));
@@ -347,8 +355,8 @@ __global__ void silu_mul_fp8_quant_deep_gemm_kernel(
   // updiv(n_tokens, NUM_PARALLEL_TOKENS) for better scheduling.
 
   // Each warp will get space to store its hidden dim for gate and up.
-  __int128_t* s_hidden_load = smem_128 + warp_id * ((2 * 128 / 8) * NUM_STAGES);
-  __int128_t* smem_load_ptr = s_hidden_load + lane_id;
+  vllm_int128_t* s_hidden_load = smem_128 + warp_id * ((2 * 128 / 8) * NUM_STAGES);
+  vllm_int128_t* smem_load_ptr = s_hidden_load + lane_id;
 
   const __nv_bfloat16 fp8_inv = __hdiv(__float2bfloat16(1.f), fp8_max);
 
@@ -356,11 +364,11 @@ __global__ void silu_mul_fp8_quant_deep_gemm_kernel(
   int32_t load_stage_offset{};
   const __nv_bfloat16 one_bf16 = __float2bfloat16_rn(1.f);
 
-  __int64_t* smem_compute_ptr = reinterpret_cast<__int64_t*>(smem_128) +
+  int64_t* smem_compute_ptr = reinterpret_cast<int64_t*>(smem_128) +
                                 warp_id * (2 * (GROUP_SIZE / 4) * NUM_STAGES) +
                                 lane_id;
-  __int64_t* s_gate64_ptr = smem_compute_ptr;
-  __int64_t* s_up64_ptr = smem_compute_ptr + GROUP_SIZE / 4;
+  int64_t* s_gate64_ptr = smem_compute_ptr;
+  int64_t* s_up64_ptr = smem_compute_ptr + GROUP_SIZE / 4;
 
   int tokens_lower, tokens_upper;
 
@@ -387,10 +395,10 @@ __global__ void silu_mul_fp8_quant_deep_gemm_kernel(
   const Idx_t gate_warp_offset =
       warp_id * ((stride_i_h * H) / (8 * NUM_WARPS)) + (lane_id & 0b1111);
 
-  const __int128_t* input_128_ptr =
-      reinterpret_cast<const __int128_t*>(_input) + gate_warp_offset +
+  const vllm_int128_t* input_128_ptr =
+      reinterpret_cast<const vllm_int128_t*>(_input) + gate_warp_offset +
       ((lane_id < 16) ? 0 : ((H * stride_i_h) / 8));
-  __int128_t* load_ptr = const_cast<__int128_t*>(input_128_ptr + base_i);
+  vllm_int128_t* load_ptr = const_cast<vllm_int128_t*>(input_128_ptr + base_i);
 
   auto token_offset = token_id - expert_offset;
 
@@ -429,15 +437,15 @@ __global__ void silu_mul_fp8_quant_deep_gemm_kernel(
 
         base_i = expert_id * (stride_i_e / 8);
         token_offset = 0;
-        load_ptr = const_cast<__int128_t*>(input_128_ptr + base_i);
+        load_ptr = const_cast<vllm_int128_t*>(input_128_ptr + base_i);
       } else {
         // We remain within the same expert, so just
-        // move by H/4 __int128_t (2 * H/8).
+        // move by H/4 vllm_int128_t (2 * H/8).
         base_i += stride_yq_t / 4;
         token_offset++;
       }
 
-      load_ptr = const_cast<__int128_t*>(input_128_ptr + base_i);
+      load_ptr = const_cast<vllm_int128_t*>(input_128_ptr + base_i);
 
       auto smem_load_ptr_staged = smem_load_ptr + load_stage_offset;
 
@@ -491,15 +499,15 @@ __global__ void silu_mul_fp8_quant_deep_gemm_kernel(
       __syncthreads();
       load_and_advance_y_pred();
 
-      __int64_t* gate64_ptr = s_gate64_ptr + compute_pipeline_offset_64;
-      __int64_t* up64_ptr = s_up64_ptr + compute_pipeline_offset_64;
+      int64_t* gate64_ptr = s_gate64_ptr + compute_pipeline_offset_64;
+      int64_t* up64_ptr = s_up64_ptr + compute_pipeline_offset_64;
 
       // COMPUTE_STAGE_SIZE/MOD must also be constexpr!
       compute_pipeline_offset_64 += COMPUTE_STAGE_SIZE;
       compute_pipeline_offset_64 %= COMPUTE_STAGE_MOD;
 
-      __int64_t gate64 = *gate64_ptr;
-      __int64_t up64 = *up64_ptr;
+      int64_t gate64 = *gate64_ptr;
+      int64_t up64 = *up64_ptr;
 
       // Compute
       __nv_bfloat162 res[2];

@@ -343,11 +343,12 @@ void quant_impl(void* output, void* output_scale, void* input,
   CHECK_TH_CUDA(x, m);    \
   CHECK_CONTIGUOUS(x, m);
 
-constexpr auto HALF = torch::headeronly::ScalarType::Half;
-constexpr auto BF16 = torch::headeronly::ScalarType::BFloat16;
-constexpr auto FLOAT = torch::headeronly::ScalarType::Float;
-constexpr auto INT = torch::headeronly::ScalarType::Int;
-constexpr auto UINT8 = torch::headeronly::ScalarType::Byte;
+// Not HALF/FLOAT/INT/UINT8: windows.h typedefs FLOAT, INT and UINT8 (zbrad windows-dev).
+constexpr auto kHalf = torch::headeronly::ScalarType::Half;
+constexpr auto kBFloat16 = torch::headeronly::ScalarType::BFloat16;
+constexpr auto kFloat = torch::headeronly::ScalarType::Float;
+constexpr auto kInt = torch::headeronly::ScalarType::Int;
+constexpr auto kUInt8 = torch::headeronly::ScalarType::Byte;
 
 // Common validation for fp4 experts quantization entry points.
 static void validate_fp4_experts_quant_inputs(
@@ -372,14 +373,14 @@ static void validate_fp4_experts_quant_inputs(
   STD_TORCH_CHECK(input_offset_by_experts.dim() == 1);
   STD_TORCH_CHECK(output_scale_offset_by_experts.dim() == 1);
 
-  STD_TORCH_CHECK(input.scalar_type() == HALF || input.scalar_type() == BF16);
-  STD_TORCH_CHECK(input_global_scale.scalar_type() == FLOAT);
-  STD_TORCH_CHECK(input_offset_by_experts.scalar_type() == INT);
-  STD_TORCH_CHECK(output_scale_offset_by_experts.scalar_type() == INT);
+  STD_TORCH_CHECK(input.scalar_type() == kHalf || input.scalar_type() == kBFloat16);
+  STD_TORCH_CHECK(input_global_scale.scalar_type() == kFloat);
+  STD_TORCH_CHECK(input_offset_by_experts.scalar_type() == kInt);
+  STD_TORCH_CHECK(output_scale_offset_by_experts.scalar_type() == kInt);
   // output is uint8 (two nvfp4 values are packed into one uint8)
   // output_scale is int32 (four fp8 values are packed into one int32)
-  STD_TORCH_CHECK(output.scalar_type() == UINT8);
-  STD_TORCH_CHECK(output_scale.scalar_type() == INT);
+  STD_TORCH_CHECK(output.scalar_type() == kUInt8);
+  STD_TORCH_CHECK(output_scale.scalar_type() == kInt);
 
   const int BLOCK_SIZE = 16;
   STD_TORCH_CHECK(k % BLOCK_SIZE == 0, "k must be a multiple of 16");

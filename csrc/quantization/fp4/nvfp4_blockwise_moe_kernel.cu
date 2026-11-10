@@ -33,6 +33,16 @@
 #include "cutlass/gemm/device/gemm_universal_adapter.h"
 #include "cutlass/gemm/kernel/gemm_universal.hpp"
 
+// CUTLASS's host reference headers (util/reference/host/tensor_fill.h) use the
+// C NAN macro, which this MSVC/nvcc compile does not see (zbrad windows-dev).
+#if defined(_MSC_VER) && !defined(__clang__)
+  #include <cmath>
+  #include <limits>
+  #ifndef NAN
+    #define NAN (std::numeric_limits<float>::quiet_NaN())
+  #endif
+#endif
+
 #include "cutlass/util/command_line.h"
 #include "cutlass/util/distribution.h"
 #include "cutlass/util/host_tensor.h"
