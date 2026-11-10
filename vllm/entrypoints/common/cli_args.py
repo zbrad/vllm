@@ -20,6 +20,7 @@ from vllm.entrypoints.anthropic.protocol import (
 from vllm.entrypoints.launchers.utils.constants import (
     H11_MAX_HEADER_COUNT_DEFAULT,
     H11_MAX_INCOMPLETE_EVENT_SIZE_DEFAULT,
+    MAX_CONNECTIONS_DEFAULT,
 )
 from vllm.entrypoints.openai.models.protocol import LoRAModulePath
 from vllm.logger import init_logger
@@ -374,6 +375,11 @@ class FrontendArgs(BaseFrontendArgs):
     h11_max_header_count: int = H11_MAX_HEADER_COUNT_DEFAULT
     """Maximum number of HTTP headers allowed in a request for h11 parser.
     Helps mitigate header abuse. Default: 256."""
+    max_connections: int | None = MAX_CONNECTIONS_DEFAULT
+    """Maximum number of open HTTP connections each API server process accepts
+    at once. Further clients wait in the listen backlog until one closes, so
+    idle connections cannot exhaust the event loop. Default: no limit, except
+    256 on Windows, whose select()-based event loop fails past 511 sockets."""
     enable_offline_docs: bool = False
     """
     Enable offline FastAPI documentation for air-gapped environments.

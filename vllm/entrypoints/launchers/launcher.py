@@ -32,6 +32,7 @@ from vllm.version import __version__ as VLLM_VERSION
 from .utils.constants import (
     H11_MAX_HEADER_COUNT_DEFAULT,
     H11_MAX_INCOMPLETE_EVENT_SIZE_DEFAULT,
+    MAX_CONNECTIONS_DEFAULT,
 )
 
 logger = init_logger(__name__)
@@ -39,6 +40,8 @@ logger = init_logger(__name__)
 # A worker with more connections than another leaves a pending connection to
 # the less loaded one, rechecking every 1 ms, for up to 5 ms (it may be busy).
 _ACCEPT_DEFER_CHECKS = 5
+# How often a server at max_connections checks whether a connection closed.
+_CAPACITY_RECHECK_S = 0.01
 # The load of a worker that is not accepting (also the initial value of the
 # shared array), so it is never the least loaded.
 _NOT_ACCEPTING = 2**31 - 1
@@ -55,15 +58,21 @@ class NoSignalServer(uvicorn.Server):
     publishes its number of open connections, and a pending connection is
     accepted by the least loaded worker. The event loop's own server would
     accept every queued connection in whichever worker wakes first.
+
+    With ``max_connections``, the same accept loop stops accepting while that
+    many connections are open; further clients wait in the listen backlog,
+    outside the event loop, instead of each adding a socket to it.
     """
 
     def __init__(
         self,
         config: uvicorn.Config,
         peer_loads: tuple[MutableSequence[int], int] | None = None,
+        max_connections: int | None = None,
     ):
         super().__init__(config)
         self.peer_loads = peer_loads
+        self.max_connections = max_connections
         self._accept_tasks: set[asyncio.Task] = set()
         self._connecting = 0
 
@@ -72,9 +81,16 @@ class NoSignalServer(uvicorn.Server):
         yield
 
     def _publish_load(self) -> None:
-        assert self.peer_loads is not None
+        if self.peer_loads is None:  # max_connections alone: nothing to share
+            return
         loads, index = self.peer_loads
         loads[index] = len(self.server_state.connections) + self._connecting
+
+    def _at_capacity(self) -> bool:
+        if not self.max_connections:
+            return False
+        open_now = len(self.server_state.connections) + self._connecting
+        return open_now >= self.max_connections
 
     def _least_loaded(self) -> bool:
         assert self.peer_loads is not None
@@ -82,7 +98,13 @@ class NoSignalServer(uvicorn.Server):
         return loads[index] <= min(loads)
 
     async def startup(self, sockets: list[socket.socket] | None = None) -> None:
-        if not (self.peer_loads and sockets):
+        if not ((self.peer_loads or self.max_connections) and sockets):
+            if self.max_connections and not sockets:
+                logger.warning(
+                    "max_connections=%d is not enforced: uvicorn binds its own "
+                    "socket here, so vLLM's accept loop is not used.",
+                    self.max_connections,
+                )
             return await super().startup(sockets)
         # With no sockets uvicorn starts no asyncio server; _accept serves
         # them with uvicorn's protocol instead.
@@ -103,10 +125,12 @@ class NoSignalServer(uvicorn.Server):
     async def _accept(self, sock: socket.socket) -> None:
         loop = asyncio.get_running_loop()
         while True:
+            while self._at_capacity():
+                await asyncio.sleep(_CAPACITY_RECHECK_S)
             await _readable(loop, sock)
             # Connections closed since the last accept; peers refresh likewise.
             self._publish_load()
-            for _ in range(_ACCEPT_DEFER_CHECKS):
+            for _ in range(_ACCEPT_DEFER_CHECKS if self.peer_loads else 0):
                 if self._least_loaded():
                     break
                 await asyncio.sleep(0.001)
@@ -183,7 +207,7 @@ async def serve_http(
 ):
     """Start a FastAPI app using Uvicorn, with support for custom Uvicorn config
     options.  Supports http header limits via h11_max_incomplete_event_size and
-    h11_max_header_count.
+    h11_max_header_count, and an open-connection cap via max_connections.
     """
     logger.info("Available routes are:")
     # post endpoints
@@ -212,6 +236,7 @@ async def serve_http(
         "h11_max_incomplete_event_size", None
     )
     h11_max_header_count = uvicorn_kwargs.pop("h11_max_header_count", None)
+    max_connections = uvicorn_kwargs.pop("max_connections", MAX_CONNECTIONS_DEFAULT)
 
     # Set safe defaults if not provided
     if h11_max_incomplete_event_size is None:
@@ -224,7 +249,9 @@ async def serve_http(
     config.h11_max_incomplete_event_size = h11_max_incomplete_event_size
     config.h11_max_header_count = h11_max_header_count
     config.load()
-    server = NoSignalServer(config, peer_loads=peer_loads)
+    server = NoSignalServer(
+        config, peer_loads=peer_loads, max_connections=max_connections
+    )
     app.state.server = server
 
     loop = asyncio.get_running_loop()

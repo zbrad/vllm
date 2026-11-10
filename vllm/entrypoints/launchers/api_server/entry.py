@@ -157,6 +157,7 @@ async def build_and_serve(
         ssl_ciphers=args.ssl_ciphers,
         h11_max_incomplete_event_size=args.h11_max_incomplete_event_size,
         h11_max_header_count=args.h11_max_header_count,
+        max_connections=args.max_connections,
         **uvicorn_kwargs,
     )
 
