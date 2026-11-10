@@ -18,8 +18,10 @@ torch == 2.15.0
 # Triton for Windows (triton-lang/triton-windows), the version torch 2.15's checkout pins (3.9.0).
 triton-windows == 3.9.0.post30; sys_platform == "win32"
 
-apache-tvm-ffi==0.1.11
-tilelang==0.1.12
+# xgrammar 0.2.8's Windows wheel imports tvm::ffi::Error symbols that tvm_ffi.dll exports only from 0.1.13
+# (0.1.11/0.1.12: WinError 127 on import). Every tilelang release caps apache-tvm-ffi < 0.1.13, so tilelang (the
+# mhc kernels only) is left out on Windows; xgrammar is on the import path of every engine start.
+apache-tvm-ffi==0.1.13.post3
 # >=1.31.0 keeps execution plans alive for the CUDA graphs recorded from them
 # (NVIDIA/cudnn-frontend#1195); older versions can replay an unloaded kernel.
 nvidia-cudnn-frontend>=1.31.0
