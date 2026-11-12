@@ -92,9 +92,13 @@ def has_flashinfer() -> bool:
     if importlib.util.find_spec("flashinfer") is None:
         logger.debug_once("FlashInfer unavailable since package was not found")
         return False
-    # FlashInfer's JIT runs nvcc and `ninja` (from PATH).
-    if not has_flashinfer_cubin() and (
-        _flashinfer_nvcc_path() is None or shutil.which("ninja") is None
+    # FlashInfer's JIT runs nvcc and `ninja` (from PATH). With FLASHINFER_DISABLE_JIT set it never
+    # compiles: kernels come from the precompiled flashinfer-jit-cache wheels, and a module missing
+    # there fails by name, so a deployment without a CUDA toolkit still has FlashInfer.
+    if (
+        not has_flashinfer_cubin()
+        and not os.environ.get("FLASHINFER_DISABLE_JIT")
+        and (_flashinfer_nvcc_path() is None or shutil.which("ninja") is None)
     ):
         logger.warning_once(
             "FlashInfer kernels are disabled: flashinfer-cubin is not installed "
