@@ -41,9 +41,9 @@ torch @ https://github.com/zbrad/pytorch/releases/download/v2.15.0%2Bgb10.cu134.
 # needed is no longer required. The packaged vllm wheel defaults FLASHINFER_DISABLE_JIT=1 at
 # import (vllm/env_override.py, flag baked in by tuned/package.sh), to get a hard
 # fail instead of a silent JIT compile for any op outside the filtered set.
-flashinfer-python @ https://github.com/zbrad/flashinfer/releases/download/v0.7.2.post1%2Bgb10.cu134.20261102.0/flashinfer_python-0.7.2.post1%2Bgb10.cu134.20261102.0-py3-none-any.whl
-flashinfer-jit-cache @ https://github.com/zbrad/flashinfer/releases/download/v0.7.2.post1%2Bgb10.cu134.20261102.0/flashinfer_jit_cache-0.7.2.post1%2Bgb10.cu134.20261102.0-py3-none-any.whl
-flashinfer-jit-cache-sm121a @ https://github.com/zbrad/flashinfer/releases/download/v0.7.2.post1%2Bgb10.cu134.20261102.0/flashinfer_jit_cache_sm121a-0.7.2.post1%2Bgb10.cu134.20261102.0-cp39-abi3-linux_aarch64.whl
+flashinfer-python @ https://github.com/zbrad/flashinfer/releases/download/v0.7.4%2Bgb10.cu134.20261112.0/flashinfer_python-0.7.4%2Bgb10.cu134.20261112.0-py3-none-any.whl
+flashinfer-jit-cache @ https://github.com/zbrad/flashinfer/releases/download/v0.7.4%2Bgb10.cu134.20261112.0/flashinfer_jit_cache-0.7.4%2Bgb10.cu134.20261112.0-py3-none-any.whl
+flashinfer-jit-cache-sm121a @ https://github.com/zbrad/flashinfer/releases/download/v0.7.4%2Bgb10.cu134.20261112.0/flashinfer_jit_cache_sm121a-0.7.4%2Bgb10.cu134.20261112.0-cp39-abi3-linux_aarch64.whl
 apache-tvm-ffi==0.1.11
 tilelang==0.1.12
 # >=1.31.0 keeps execution plans alive for the CUDA graphs recorded from them
