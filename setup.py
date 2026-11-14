@@ -1393,6 +1393,10 @@ def get_vllm_version() -> str:
                     )
                     version = version.split("+", 1)[0]
                     version += f"+{gb10.Gb10Version.local_suffix(cuda_version)}"
+                    # ...and in vllm/_version.py, so vllm.__version__ is that version too.
+                    gb10.Gb10Version.write_version_file(
+                        os.path.join(ROOT_DIR, "vllm", "_version.py"), version
+                    )
                 elif cuda_version != envs.VLLM_MAIN_CUDA_VERSION:
                     cuda_version_str = cuda_version.replace(".", "")[:3]
                     # skip this for source tarball, required for pypi

@@ -4,8 +4,8 @@
 #   1. the wheel's sha256 matches package-info.txt and its .sha256 sidecar;
 #   2. the installed _C_stable_libtorch.abi3.so and _moe_C_stable_libtorch.abi3.so are byte-identical to the
 #      packaged wheel's copies, so the bits in the package are the bits that run;
-#   3. the installed distribution is exactly the packaged version, vllm loads from the venv, and each stamped
-#      extension's build-info JSON reads back as this release, variant and toolkit (H7);
+#   3. the installed distribution and vllm.__version__ are exactly the packaged version, vllm loads from the
+#      venv, and each stamped extension's build-info JSON reads back as this release, variant and toolkit (H7);
 #   4. the libtorch and c10 libraries a process maps are the venv's, and the toolkit libraries resolve (G2);
 #   5. three real tests from this repo pass against the package. They run from an empty directory with the repo
 #      appended to sys.path AFTER site-packages, so `import vllm` is the package's and `tests` is the repo's.
@@ -76,9 +76,10 @@ PY
     [[ ${bytes_ok} -eq 1 ]] && ok "installed ${STAMPED[*]} are byte-identical to the packaged wheel's copies"
 
     # The distribution version and where vllm loads from (an empty directory, so the source tree is not on the path).
-    meta="$(cd "${WORK}" && "${PY}" -I -c 'import importlib.metadata as md, vllm; print("dist=" + md.version("vllm")); print("file=" + vllm.__file__)' 2>&1)"
+    meta="$(cd "${WORK}" && "${PY}" -I -c 'import importlib.metadata as md, vllm; print("dist=" + md.version("vllm")); print("module=" + vllm.__version__); print("file=" + vllm.__file__)' 2>&1)"
     echo "${meta}" | sed 's/^/  | /'
     [[ "$(sed -n 's/^dist=//p' <<< "${meta}")" == "${VERSION}" ]] && ok "installed vllm is exactly ${VERSION}" || fail "installed vllm is not ${VERSION}"
+    [[ "$(sed -n 's/^module=//p' <<< "${meta}")" == "${VERSION}" ]] && ok "vllm.__version__ is ${VERSION}" || fail "vllm.__version__ is not ${VERSION}"
     [[ "$(sed -n 's/^file=//p' <<< "${meta}")" == "${SITE_DIR}/"* ]] && ok "vllm loads from the venv" || fail "vllm loads from outside ${SITE_DIR}"
 
     for so in "${STAMPED[@]}"; do
