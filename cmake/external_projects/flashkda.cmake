@@ -9,6 +9,17 @@ if(FLASH_KDA_SRC_DIR)
     flashkda
     SOURCE_DIR ${FLASH_KDA_SRC_DIR}
   )
+elseif(MSVC)
+  # zbrad tuned-win: native Windows builds use zbrad/FlashKDA tuned-win, upstream
+  # 17a037d with its bundled CUTLASS moved to main b2f249a (MSVC C3545 fix, as in the
+  # MSVC CUTLASS pin above). Linux keeps the upstream pin below.
+  FetchContent_Declare(
+    flashkda
+    GIT_REPOSITORY https://github.com/zbrad/FlashKDA.git
+    GIT_TAG c9a570ea9420aed738a12bb113c40aa1f81b0f0e
+    GIT_PROGRESS TRUE
+    GIT_SUBMODULES cutlass
+  )
 else()
   FetchContent_Declare(
     flashkda

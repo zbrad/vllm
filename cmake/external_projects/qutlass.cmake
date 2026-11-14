@@ -23,6 +23,13 @@ if(QUTLASS_SRC_DIR)
 else()
   set(_QUTLASS_UPSTREAM_REPO "https://github.com/IST-DASLab/qutlass.git")
   set(_QUTLASS_UPSTREAM_TAG "e74319e3405ce6d71965732880f5dc1f52371f64")
+  if(MSVC)
+    # zbrad tuned-win: native Windows builds use zbrad/qutlass tuned-win, upstream
+    # e74319e plus the nvcc + MSVC fixes (OUT/IN macros, host-pass inline PTX,
+    # `self.template op_N(`). Linux keeps the upstream pin above.
+    set(_QUTLASS_UPSTREAM_REPO "https://github.com/zbrad/qutlass.git")
+    set(_QUTLASS_UPSTREAM_TAG "f780ca8f0505b26d5fb4ada8d6d6f4ff0b2d2412")
+  endif()
 
   set(_qutlass_fc_root "${FETCHCONTENT_BASE_DIR}")
   if(NOT _qutlass_fc_root)

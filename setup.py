@@ -1639,12 +1639,11 @@ if _is_cuda():
         # DeepSelect requires CUDA 12.9 or later (SM100a/SM103a only)
         # Optional since it won't build on unsupported architectures
         ext_modules.append(CMakeExtension(name="vllm._deepselect_C", optional=True))
-    # zbrad windows-dev: CMakeLists.txt does not include flashkda, qutlass or DeepGEMM under
-    # MSVC (not ported yet), so their targets must not be requested on Windows.
+    # zbrad tuned-win: CMakeLists.txt does not include DeepGEMM under MSVC (it compiles its
+    # kernels at runtime with nvcc; deferred), so its target must not be requested on Windows.
     _skip_unported_on_windows = sys.platform == "win32"
-    if not _skip_unported_on_windows and (
-        USE_PRECOMPILED_EXTENSIONS
-        or (CUDA_HOME and get_nvcc_cuda_version() >= Version("12.0"))
+    if USE_PRECOMPILED_EXTENSIONS or (
+        CUDA_HOME and get_nvcc_cuda_version() >= Version("12.0")
     ):
         ext_modules.append(CMakeExtension(name="vllm._flashkda_C", optional=True))
     if envs.VLLM_USE_PRECOMPILED or (
@@ -1654,7 +1653,7 @@ if _is_cuda():
         # Optional since it won't build on unsupported architectures
         if not _skip_unported_on_windows:
             ext_modules.append(CMakeExtension(name="vllm._deep_gemm_C", optional=True))
-            ext_modules.append(CMakeExtension(name="vllm._qutlass_C", optional=True))
+        ext_modules.append(CMakeExtension(name="vllm._qutlass_C", optional=True))
     # fmha_sm100 is a Python/CuTe-DSL package installed into vllm.third_party.
     ext_modules.append(CMakeExtension(name="vllm.fmha_sm100", optional=True))
     # tml-fa4 is copied into an isolated vllm.third_party package.

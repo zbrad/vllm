@@ -1788,13 +1788,8 @@ if (VLLM_GPU_LANG STREQUAL "CUDA")
     include(cmake/external_projects/deepselect.cmake)
     include(cmake/external_projects/fmha_sm100.cmake)
     include(cmake/external_projects/flashmla.cmake)
-    # zbrad windows-dev: not ported to MSVC yet. flashkda bundles a CUTLASS without
-    # the CuTe C3545 fix; qutlass has GCC-only asm/initializers and an sm100 TMA
-    # gemm that hits nvcc's CUtensorMap C2719 (NVIDIA Bug 7071816).
-    if(NOT MSVC)
-      include(cmake/external_projects/flashkda.cmake)
-      include(cmake/external_projects/qutlass.cmake)
-    endif()
+    include(cmake/external_projects/flashkda.cmake)
+    include(cmake/external_projects/qutlass.cmake)
     include(cmake/external_projects/tml_fa4.cmake)
 
     # vllm-flash-attn should be last as it overwrites some CMake functions
