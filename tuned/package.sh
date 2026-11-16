@@ -175,6 +175,7 @@ if [[ ! -f "${NOTES}" ]]; then
         echo ""
         echo "Single-arch vllm wheel for ${GPU_TUNED_HW_LABEL} (TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}), CUDA ${CUDA_VER}."
         echo ""
+        echo "- Channel: dev (a build of upstream main, not of an upstream release tag; published as a pre-release)"
         echo "- Release label: ${LABEL} (UTC date of the tuned commit)"
         echo "- Built from commit ${BUILD_COMMIT}; tested at ${TESTED_COMMIT}"
         echo "- Upstream base: ${GPU_TUNED_UPSTREAM_REF} merge-base $(git merge-base HEAD "${GPU_TUNED_UPSTREAM_REF}" 2>/dev/null || echo unknown)"
