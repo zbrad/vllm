@@ -254,3 +254,9 @@ csrc/cpu/cpu_attn_dispatch_generated.h
 
 # Tuned builds: one tree per CUDA toolkit (tuned/README.md)
 /tuned/build/
+
+# Written by .buildkite/scripts/rocm/build.sh
+/.rocm-src/
+/.rocm-version/
+/.rocm-wheel/
+/.rocm-kernel-map/

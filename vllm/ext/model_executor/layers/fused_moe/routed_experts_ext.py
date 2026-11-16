@@ -8,6 +8,8 @@ upstream merges of that file stay conflict-free; it only imports
 
 import torch
 
+from vllm.model_executor.utils import copy_weight_
+
 
 class RoutedExpertsExt:
     """Weight-copy helper for vllm/model_executor/layers/fused_moe/routed_experts.py."""
@@ -36,7 +38,9 @@ class RoutedExpertsExt:
         ``fused_moe/oracle/mxfp4.py``. Any other dtype mismatch falls through
         to a plain ``copy_``, which performs a real cast. The chunked copy in
         ``RoutedExperts._load_w2`` goes through this too, so the workaround
-        applies to every chunk.
+        applies to every chunk. Both paths go through ``copy_weight_``, so on an
+        integrated GPU (GB10) the source's mmap pages are faulted in on the CPU
+        first instead of inside the driver copy (upstream vllm#58868).
 
         Args:
             dst: Destination tensor, written in place.
@@ -50,6 +54,6 @@ class RoutedExpertsExt:
             )
             and dst.element_size() == src.element_size()
         ):
-            dst.view(torch.uint8).copy_(src.view(torch.uint8))
+            copy_weight_(dst.view(torch.uint8), src.view(torch.uint8))
         else:
-            dst.copy_(src)
+            copy_weight_(dst, src)
