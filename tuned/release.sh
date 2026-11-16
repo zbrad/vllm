@@ -46,7 +46,10 @@ gpu_tuned_release_gates tag="${RELEASE_TAG}" variant="${GPU_TUNED_VARIANT}" cuda
     || { echo "" >&2; echo "ERROR: a release gate failed; nothing was published (and no ready-marker was written)." >&2; exit 1; }
 
 echo ""
-gpu_tuned_release_ready "${MARKER}" "zbrad/vllm" "${RELEASE_TAG}" "${RELEASE_TITLE}" \
+# Every build here is of upstream main (a PEP 440 .devN version), never of an upstream v0.X.Y tag: the dev channel only
+# (user, 2026-11-16: "dev-only for vllm, publish as pre-releases"). The marker records it, so publish.sh publishes a
+# GitHub pre-release, which is never marked Latest.
+GPU_TUNED_PRERELEASE=1 gpu_tuned_release_ready "${MARKER}" "zbrad/vllm" "${RELEASE_TAG}" "${RELEASE_TITLE}" \
     "${RELEASE_NOTES_FILE}" \
     "${WHEEL}#${WHEEL_NAME}" \
     "${WHEEL}.sha256#${WHEEL_NAME}.sha256" \
