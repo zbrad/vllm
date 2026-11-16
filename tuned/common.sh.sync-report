@@ -2,10 +2,10 @@
 
 Written by sync-common.sh; commit it with the sync. One line per vendored file.
 
-when:   2026-11-15T04:01:07Z
+when:   2026-11-16T19:09:48Z
 target: common.sh
-base:   6450ccbb013f984dbb13a13c4a3288fe11ddf420
-synced: addd9fec5230cae499c87c8b01cfee4bcb202542
+base:   addd9fec5230cae499c87c8b01cfee4bcb202542
+synced: 1e4f59115bba72d2ffa11020a148415d6ba263cd
 result: all files resolved
 
 updated    tuned-common.sh
