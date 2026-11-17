@@ -563,3 +563,17 @@ def test_direct_io_iter_files_early_stop_leaves_no_thread(direct_dir):
     next(it)
     it.close()
     assert not any(t.name == "direct-io-read-ahead" for t in threading.enumerate())
+
+
+def test_direct_io_header_metadata_colliding_with_entry_fields(direct_dir):
+    """A __metadata__ with keys named like entry fields falls back to plain JSON."""
+    path = direct_dir / "odd_meta.safetensors"
+    save_file(
+        {"a": torch.arange(6, dtype=torch.float32), "b": torch.ones(2)},
+        str(path),
+        metadata={"shape": "not a list", "dtype": "text", "format": "pt"},
+    )
+    reader = DirectIOSafetensorsReader()
+    got = dict(reader.iter_file(str(path)))
+    assert reader.direct_files == 1
+    _assert_same(got, _reference(path))

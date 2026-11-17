@@ -22,12 +22,14 @@ import mmap
 import os
 import struct
 import threading
+from array import array
 from collections import deque
 from collections.abc import Callable, Generator, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from queue import Full, Queue
 from typing import Any
 
+import msgspec
 import torch
 from safetensors.torch import safe_open
 
@@ -96,17 +98,37 @@ def _safetensors_dtypes() -> dict[str, torch.dtype]:
 _DTYPES = _safetensors_dtypes()
 
 
-class _Entry:
-    __slots__ = ("name", "dtype", "shape", "begin", "end")
+class _TensorInfo(msgspec.Struct, gc=False, frozen=True):
+    """One safetensors header entry. ``gc=False`` and tuple fields keep it out of
+    the cyclic GC's tracking, so a parsed header adds no tracked object per
+    tensor. ``__metadata__`` decodes into one too; its fields are ignored."""
+
+    dtype: str = ""
+    shape: tuple[int, ...] = ()
+    data_offsets: tuple[int, int] = (0, 0)
+
+
+_HEADER_DECODER = msgspec.json.Decoder(dict[str, _TensorInfo])
+
+
+class _Header:
+    """One file's tensors in data-offset order: names (``str``, not GC-tracked)
+    and their decoded entries. Tensors are built from it only as yielded."""
+
+    __slots__ = ("data_start", "names", "infos")
 
     def __init__(
-        self, name: str, dtype: torch.dtype, shape: list[int], begin: int, end: int
+        self, data_start: int, names: list[str], infos: dict[str, _TensorInfo]
     ) -> None:
-        self.name = name
-        self.dtype = dtype
-        self.shape = shape
-        self.begin = begin
-        self.end = end
+        self.data_start = data_start
+        self.names = names
+        self.infos = infos
+
+    def __len__(self) -> int:
+        return len(self.names)
+
+    def info(self, i: int) -> _TensorInfo:
+        return self.infos[self.names[i]]
 
 
 class _UnsupportedFile(Exception):
@@ -213,17 +235,17 @@ class DirectIOSafetensorsReader:
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
         """One file, each batch read in the caller's thread."""
         try:
-            data_start, entries = self._read_header(path)
+            header = self._read_header(path)
             fd = self._open_direct(path)
         except _UnsupportedFile as exc:
             yield from self._fallback(path, skip, str(exc))
             return
-        wanted = [e for e in entries if skip is None or not skip(e.name)]
+        wanted = self._wanted(header, skip)
         try:
             first = True
-            for batch in self._plan(wanted):
+            for lo, hi in self._plan(header, wanted):
                 try:
-                    buffer, base = self._read_batch(fd, data_start, batch)
+                    buffer, base = self._read_batch(fd, header, wanted, lo, hi)
                 except _UnsupportedFile as exc:
                     if not first:
                         raise OSError(
@@ -236,8 +258,9 @@ class DirectIOSafetensorsReader:
                 if first:
                     self.direct_files += 1
                     first = False
-                for entry in batch:
-                    yield entry.name, self._tensor(buffer, base, data_start, entry)
+                for k in range(lo, hi):
+                    i = wanted[k]
+                    yield header.names[i], self._tensor(buffer, base, header, i)
                 del buffer
             if first:
                 # Nothing wanted from this file; it still counts as direct.
@@ -277,19 +300,19 @@ class DirectIOSafetensorsReader:
 
         def produce_file(path: str) -> None:
             try:
-                data_start, entries = self._read_header(path)
+                header = self._read_header(path)
                 fd = self._open_direct(path)
             except _UnsupportedFile as exc:
                 put(("fallback", path, str(exc)))
                 return
-            wanted = [e for e in entries if skip is None or not skip(e.name)]
+            wanted = self._wanted(header, skip)
             try:
                 first = True
-                for batch in self._plan(wanted):
+                for lo, hi in self._plan(header, wanted):
                     if stop.is_set():
                         return
                     try:
-                        buffer, base = self._read_batch(fd, data_start, batch)
+                        buffer, base = self._read_batch(fd, header, wanted, lo, hi)
                     except _UnsupportedFile as exc:
                         if not first:
                             raise OSError(
@@ -300,7 +323,7 @@ class DirectIOSafetensorsReader:
                     if first:
                         self.direct_files += 1
                         first = False
-                    put(("batch", batch, buffer, base, data_start))
+                    put(("batch", header, wanted, lo, hi, buffer, base))
                     del buffer
                 if first:
                     # Nothing wanted from this file; it still counts as direct.
@@ -335,17 +358,18 @@ class DirectIOSafetensorsReader:
                 if item[0] == "fallback":
                     yield from self._fallback(item[1], skip, item[2])
                     continue
-                _, batch, buffer, base, data_start = item
+                _, header, wanted, lo, hi, buffer, base = item
                 del item
-                for entry in batch:
-                    yield entry.name, self._tensor(buffer, base, data_start, entry)
+                for k in range(lo, hi):
+                    i = wanted[k]
+                    yield header.names[i], self._tensor(buffer, base, header, i)
                 del buffer
         finally:
             stop.set()
             thread.join()
 
     @staticmethod
-    def _read_header(path: str) -> tuple[int, list[_Entry]]:
+    def _read_header(path: str) -> _Header:
         with open(path, "rb") as f:
             raw_len = f.read(_HEADER_LEN_BYTES)
             if len(raw_len) != _HEADER_LEN_BYTES:
@@ -354,18 +378,26 @@ class DirectIOSafetensorsReader:
             header_bytes = f.read(header_len)
             if len(header_bytes) != header_len:
                 raise ValueError(f"{path}: truncated safetensors header")
-        header = json.loads(header_bytes)
-        entries = []
-        for name, info in header.items():
-            if name == "__metadata__":
-                continue
-            dtype = _DTYPES.get(info["dtype"])
-            if dtype is None:
-                raise _UnsupportedFile(f"dtype {info['dtype']} of {name}")
-            begin, end = info["data_offsets"]
-            entries.append(_Entry(name, dtype, list(info["shape"]), begin, end))
-        entries.sort(key=lambda e: e.begin)
-        return _HEADER_LEN_BYTES + header_len, entries
+        try:
+            infos = _HEADER_DECODER.decode(header_bytes)
+        except msgspec.ValidationError:
+            # A __metadata__ whose keys collide with entry fields: decode as plain
+            # JSON instead (slower, and tracked, but only for such files).
+            infos = {
+                name: _TensorInfo(
+                    info.get("dtype", ""),
+                    tuple(info.get("shape", ())),
+                    tuple(info.get("data_offsets", (0, 0))),
+                )
+                for name, info in json.loads(header_bytes).items()
+                if name != "__metadata__"
+            }
+        infos.pop("__metadata__", None)
+        for name, info in infos.items():
+            if info.dtype not in _DTYPES:
+                raise _UnsupportedFile(f"dtype {info.dtype or '(missing)'} of {name}")
+        names = sorted(infos, key=lambda name: infos[name].data_offsets[0])
+        return _Header(_HEADER_LEN_BYTES + header_len, names, infos)
 
     @staticmethod
     def _open_direct(path: str) -> int:
@@ -379,27 +411,39 @@ class DirectIOSafetensorsReader:
                 raise _UnsupportedFile(f"open with O_DIRECT: {exc}") from exc
             raise
 
-    def _plan(self, entries: list[_Entry]) -> list[list[_Entry]]:
-        """Group tensors into reads of at most ``max_buffer_bytes`` each."""
-        batches: list[list[_Entry]] = []
-        for entry in entries:
-            if batches:
-                batch = batches[-1]
-                gap = entry.begin - batch[-1].end
-                span = entry.end - batch[0].begin
+    def _plan(self, header: _Header, wanted: array) -> list[tuple[int, int]]:
+        """Group the wanted tensors into reads of at most ``max_buffer_bytes``.
+
+        ``wanted`` holds header indices in offset order; each batch is a
+        ``(lo, hi)`` range into it.
+        """
+        batches: list[tuple[int, int]] = []
+        lo = 0
+        for k in range(1, len(wanted) + 1):
+            if k < len(wanted):
+                begin, end = header.info(wanted[k]).data_offsets
+                gap = begin - header.info(wanted[k - 1]).data_offsets[1]
+                span = end - header.info(wanted[lo]).data_offsets[0]
                 if gap <= self.max_gap_bytes and span + 2 * _ALIGN <= (
                     self.max_buffer_bytes
                 ):
-                    batch.append(entry)
                     continue
-            batches.append([entry])
+            batches.append((lo, k))
+            lo = k
         return batches
 
+    @staticmethod
+    def _wanted(header: _Header, skip: Callable[[str], bool] | None) -> array:
+        """Header indices of the tensors not skipped, in offset order."""
+        if skip is None:
+            return array("I", range(len(header)))
+        return array("I", (i for i, n in enumerate(header.names) if not skip(n)))
+
     def _read_batch(
-        self, fd: int, data_start: int, batch: list[_Entry]
+        self, fd: int, header: _Header, wanted: array, lo: int, hi: int
     ) -> tuple[torch.Tensor, int]:
-        start = data_start + batch[0].begin
-        end = data_start + batch[-1].end
+        start = header.data_start + header.info(wanted[lo]).data_offsets[0]
+        end = header.data_start + header.info(wanted[hi - 1]).data_offsets[1]
         base = start - start % _ALIGN
         length = -(-(end - base) // _ALIGN) * _ALIGN
         if self.device is not None:
@@ -531,18 +575,22 @@ class DirectIOSafetensorsReader:
 
     @staticmethod
     def _tensor(
-        buffer: torch.Tensor, base: int, data_start: int, entry: _Entry
+        buffer: torch.Tensor, base: int, header: _Header, i: int
     ) -> torch.Tensor:
-        nbytes = entry.end - entry.begin
+        info = header.info(i)
+        dtype = _DTYPES[info.dtype]
+        shape = info.shape
+        begin, end = info.data_offsets
+        nbytes = end - begin
         if nbytes == 0:
-            return torch.empty(entry.shape, dtype=entry.dtype)
-        offset = data_start + entry.begin - base
+            return torch.empty(shape, dtype=dtype)
+        offset = header.data_start + begin - base
         chunk = buffer[offset : offset + nbytes]
-        if chunk.data_ptr() % entry.dtype.itemsize:
+        if chunk.data_ptr() % dtype.itemsize:
             # The format does not require offsets aligned to the dtype; copy
             # such a tensor out so the view below is legal.
             chunk = chunk.clone()
-        return chunk.view(entry.dtype).reshape(entry.shape)
+        return chunk.view(dtype).reshape(shape)
 
     def _fallback(
         self,
