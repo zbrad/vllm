@@ -46,7 +46,10 @@ from vllm.model_executor.layers.quantization import (
     QuantizationConfig,
     get_quantization_config,
 )
-from vllm.model_executor.model_loader.direct_io import DirectIOSafetensorsReader
+from vllm.model_executor.model_loader.direct_io import (
+    DirectIOSafetensorsReader,
+    resident_fraction,
+)
 from vllm.model_executor.model_loader.ep_weight_filter import (
     should_skip_weight,
 )
@@ -1126,6 +1129,11 @@ def _prefetch_all_checkpoints(
 # cache. On ZFS it would also skip the ARC/L2ARC, and network filesystems are
 # handled by auto-prefetch, so neither is switched automatically.
 _DIRECT_IO_AUTO_FS_TYPES = frozenset({"ext4", "xfs"})
+# The automatic direct I/O default memory-maps instead when at least this share of
+# the checkpoint is already in the page cache: a warm mmap load of a small model
+# beats re-reading it from disk (on GB10, a 7.9 GB checkpoint loaded in
+# 0.28-0.39 s memory-mapped warm against 0.89 s with direct I/O).
+_DIRECT_IO_MAX_CACHED_FRACTION = 0.5
 
 
 def _auto_direct_io(fs_type: str) -> bool:
@@ -1195,14 +1203,22 @@ def safetensors_weights_iterator(
     )
 
     if safetensors_load_strategy is None and _auto_direct_io(fs_type):
-        logger.info_once(
-            "Integrated GPU with checkpoints on a local %s filesystem: loading "
-            "safetensors with direct I/O (no page cache). Start vLLM with "
-            "--safetensors-load-strategy=lazy to memory-map them instead.",
-            fs_name,
-        )
-        safetensors_load_strategy = "direct"
-        loading_desc += " (direct I/O)"
+        cached = resident_fraction(sorted_files)
+        if cached is not None and cached >= _DIRECT_IO_MAX_CACHED_FRACTION:
+            logger.info_once(
+                "Integrated GPU, but %.0f%% of the checkpoint is already in the "
+                "page cache: memory-mapping it instead of direct I/O.",
+                100 * cached,
+            )
+        else:
+            logger.info_once(
+                "Integrated GPU with checkpoints on a local %s filesystem: loading "
+                "safetensors with direct I/O (no page cache). Start vLLM with "
+                "--safetensors-load-strategy=lazy to memory-map them instead.",
+                fs_name,
+            )
+            safetensors_load_strategy = "direct"
+            loading_desc += " (direct I/O)"
 
     should_prefetch = safetensors_load_strategy == "prefetch"
     if safetensors_load_strategy is None:

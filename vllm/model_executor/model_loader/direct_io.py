@@ -16,6 +16,7 @@ device. Files or tensors it cannot handle (no ``O_DIRECT`` support on the
 filesystem, an unknown dtype) fall back to ``safetensors.safe_open``.
 """
 
+import ctypes
 import errno
 import json
 import mmap
@@ -129,6 +130,46 @@ class _Header:
 
     def info(self, i: int) -> _TensorInfo:
         return self.infos[self.names[i]]
+
+
+def resident_fraction(paths: Iterable[str]) -> float | None:
+    """Fraction of the bytes of ``paths`` already in the page cache.
+
+    Asks the kernel with ``mincore(2)`` over a private, never-written mapping of
+    each file (its pages are the page cache's), so nothing is read. Returns None
+    where ``mincore`` is unavailable or a file cannot be checked. For an 80 GB
+    checkpoint this is one 20 MB residency vector per file set, counted in C.
+    """
+    try:
+        mincore = ctypes.CDLL(None, use_errno=True).mincore
+    except (OSError, AttributeError):
+        return None
+    mincore.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p]
+    mincore.restype = ctypes.c_int
+    total = resident = 0
+    try:
+        for path in paths:
+            size = os.path.getsize(path)
+            if size == 0:
+                continue
+            pages = -(-size // mmap.PAGESIZE)
+            vec = (ctypes.c_ubyte * pages)()
+            with (
+                open(path, "rb") as fh,
+                mmap.mmap(fh.fileno(), size, access=mmap.ACCESS_COPY) as mapped,
+            ):
+                view = (ctypes.c_ubyte * size).from_buffer(mapped)
+                try:
+                    if mincore(ctypes.addressof(view), size, vec) != 0:
+                        return None
+                finally:
+                    del view
+            total += size
+            # mincore sets bit 0 for a resident page; the other bits are reserved.
+            resident += min(bytes(vec).count(1) * mmap.PAGESIZE, size)
+    except (OSError, ValueError):
+        return None
+    return resident / total if total else None
 
 
 class _UnsupportedFile(Exception):
