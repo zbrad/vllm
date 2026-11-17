@@ -1278,7 +1278,8 @@ gpu_tuned_check_wheel_label() {
 }
 
 # gpu_tuned_check_release_tag <tag> -- refuses (returns 1) unless the release tag carries the
-# date label (docs/ARCHITECTURE.md E2/E3): a native tag v0.<YYYYMMDD>.<seq>-<variant>-cu<cuda>, or a
+# date label (docs/ARCHITECTURE.md E2/E3): a native tag v<upstream-version>-<YYYYMMDD>.<seq>-<variant>-cu<cuda>
+# (or the older v0.<YYYYMMDD>.<seq>-<variant>-cu<cuda>), or a
 # wheel tag whose version ends .cu<cuda>.<YYYYMMDD>[.<seq>]. It is gpu_tuned_date_label's own
 # grammar, so what is accepted here is what the sequence allocator sees as taken. A commit count,
 # an upstream version or a sha never names a release. GPU_TUNED_ALLOW_COUNTER_LABEL=1 also accepts a
@@ -1288,10 +1289,10 @@ gpu_tuned_check_release_tag() {
     local tag="${1:-}"
     if [[ -n "$(gpu_tuned_date_label "${tag}")" ]]; then return 0; fi
     if [[ "${GPU_TUNED_ALLOW_COUNTER_LABEL:-}" == 1 ]]; then
-        echo "WARNING: gpu_tuned_check_release_tag: '${tag}' carries no date label (GPU_TUNED_ALLOW_COUNTER_LABEL=1); migrate this repo to v0.<YYYYMMDD>.<seq>-<variant>-cu<cuda> (native) or <variant>.cu<cuda>.<YYYYMMDD>[.<seq>] (wheel)." >&2
+        echo "WARNING: gpu_tuned_check_release_tag: '${tag}' carries no date label (GPU_TUNED_ALLOW_COUNTER_LABEL=1); migrate this repo to v<upstream-version>-<YYYYMMDD>.<seq>-<variant>-cu<cuda> (native) or <variant>.cu<cuda>.<YYYYMMDD>[.<seq>] (wheel)." >&2
         return 0
     fi
-    echo "ERROR: gpu_tuned_check_release_tag: release tag '${tag}' carries no date label. Native tags are v0.<YYYYMMDD>.<seq>-<variant>-cu<cuda> (gpu_tuned_native_tag); wheel tags end <variant>.cu<cuda>.<YYYYMMDD>[.<seq>] (docs/ARCHITECTURE.md E2)." >&2
+    echo "ERROR: gpu_tuned_check_release_tag: release tag '${tag}' carries no date label. Native tags are v<upstream-version>-<YYYYMMDD>.<seq>-<variant>-cu<cuda> or the older v0.<YYYYMMDD>.<seq>-<variant>-cu<cuda> (gpu_tuned_native_tag); wheel tags end <variant>.cu<cuda>.<YYYYMMDD>[.<seq>] (docs/ARCHITECTURE.md E2)." >&2
     return 1
 }
 
@@ -1325,13 +1326,15 @@ gpu_tuned_verify_resolves_in() {
 
 # gpu_tuned_newest_release_tag <variant> <cuda-tag> -- reads release tags on stdin (one per line, newest
 # first, as `gh release list` prints them) and prints the newest native tag for that variant and
-# toolkit: the highest v0.<YYYYMMDD>.<seq>-<variant>-<cuda-tag>, ranked by date then sequence as numbers
-# (.10 above .2), never by list order. A tag in an older form (v<ver>-<variant>-<cuda>[-g<sha>]) is never
+# toolkit among the date-label forms v<upstream-version>-<YYYYMMDD>.<seq>-<variant>-<cuda-tag> and the older
+# v0.<YYYYMMDD>.<seq>-<variant>-<cuda-tag> (version 0): ranked by upstream version, then date, then sequence,
+# each compared as numbers (.10 above .2, 1.10.0 above 1.9.0), never by list order. A tag in an older form (v<ver>-<variant>-<cuda>[-g<sha>]) is never
 # preferred over a date-label one; with no date-label tag it falls back to the first older-form tag, with
 # a NOTE on stderr, so a consumer keeps working until a date-label release exists (ARCHITECTURE.md E7).
 # Prints nothing and returns 1 if no tag matches at all.
 gpu_tuned_newest_release_tag() {
-    local variant="${1:-}" cuda="${2:-}" t label key best="" bestkey="" legacy=""
+    local variant="${1:-}" cuda="${2:-}" t label key ver vkey part best="" bestkey="" legacy=""
+    local -a vparts
     local tags=()
     if ! gpu_tuned_valid_variant "${variant}" || [[ ! "${cuda}" =~ ^cu[0-9]+$ ]]; then
         echo "ERROR: gpu_tuned_newest_release_tag: need <variant> <cuNNN>, got '${variant}' '${cuda}'." >&2
@@ -1339,10 +1342,13 @@ gpu_tuned_newest_release_tag() {
     fi
     while IFS= read -r t; do tags+=("${t}"); done
     for t in "${tags[@]}"; do
-        if [[ "${t}" == "v0."*"-${variant}-${cuda}" ]]; then
-            label="$(gpu_tuned_date_label "${t}")"
-            [[ -n "${label}" ]] || continue
-            key="$(printf '%s %012d' "${label%%.*}" "$(gpu_tuned_label_seq "${label}")")"
+        label="$(gpu_tuned_date_label "${t}")"
+        if [[ -n "${label}" && "${t}" =~ ^v[0-9.]+[-.][1-9][0-9]{7}\.[0-9]+-${variant}-${cuda}$ ]]; then
+            ver="$(gpu_tuned_native_tag_version "${t}")"
+            IFS=. read -r -a vparts <<< "${ver}"
+            vkey=""
+            for part in "${vparts[@]}" 0 0 0 0; do vkey+="$(printf '%012d' "${part}")"; done
+            key="$(printf '%s %s %012d' "${vkey:0:48}" "${label%%.*}" "$(gpu_tuned_label_seq "${label}")")"
             if [[ -z "${bestkey}" || "${key}" > "${bestkey}" ]]; then best="${t}"; bestkey="${key}"; fi
         elif [[ -z "${legacy}" && "${t}" =~ ^v[0-9].*-${variant}-${cuda}(-g[0-9a-f]+)?$ ]]; then
             legacy="${t}"
@@ -1612,6 +1618,10 @@ gpu_tuned_require_pushed() {
 # nothing attached is always a caller mistake in this fleet (forgot to
 # build/package first), not a legitimate case.
 #
+# GPU_TUNED_PRERELEASE=1 publishes it as a GitHub pre-release (`--prerelease`),
+# which GitHub never marks Latest: the dev channel (a build of upstream's main,
+# not of an upstream release tag). Unset or anything else: a normal release.
+#
 # Refuses to publish from a dirty tree (gpu_tuned_require_clean_tree), run
 # against the current directory's checkout, before anything reaches `gh`.
 #
@@ -1639,15 +1649,21 @@ gpu_tuned_publish_release() {
     if [[ "${notes}" == @* ]]; then
         notes_args=(--notes-file "${notes#@}")
     fi
+    local pre_args=() kind="published"
+    if [[ "${GPU_TUNED_PRERELEASE:-}" == 1 ]]; then
+        pre_args=(--prerelease)
+        kind="published pre-release"
+    fi
     if ! gh release create "${tag}" \
         --repo "${repo}" \
         --title "${title}" \
         --target "${GPU_TUNED_RELEASE_TARGET:-$(git rev-parse HEAD)}" \
+        "${pre_args[@]}" \
         "${notes_args[@]}" \
         "$@"; then
         return 1
     fi
-    echo "OK: published ${repo}@${tag} -- https://github.com/${repo}/releases/tag/${tag}"
+    echo "OK: ${kind} ${repo}@${tag} -- https://github.com/${repo}/releases/tag/${tag}"
 }
 
 # --- release vs publish (docs/ARCHITECTURE.md B3, I3, I5) -------------------------------------------
@@ -1726,7 +1742,8 @@ gpu_tuned_release_marker_clear() {
 
 # gpu_tuned_release_ready <marker> <owner/repo> <tag> <title> <notes-file> <asset-spec ...> -- after every gate passed,
 # record what publish.sh may publish: the repo, tag, title, HEAD, the notes file and each asset (path#label) with the
-# sha256 of each. Does not publish. Asset paths and the notes file are stored absolute.
+# sha256 of each. Does not publish. Asset paths and the notes file are stored absolute. GPU_TUNED_PRERELEASE=1 records
+# prerelease=1, so publish.sh publishes a pre-release (gpu_tuned_publish_release) whatever its own environment says.
 gpu_tuned_release_ready() {
     local marker="${1:?marker}" repo="${2:?repo}" tag="${3:?tag}" title="${4:?title}" notes="${5:?notes}"
     shift 5
@@ -1741,6 +1758,7 @@ gpu_tuned_release_ready() {
         echo "head=$(git rev-parse HEAD)"
         echo "notes=$(realpath "${notes}")"
         echo "notes_sha256=$(sha256sum "${notes}" | awk '{print $1}')"
+        [[ "${GPU_TUNED_PRERELEASE:-}" == 1 ]] && echo "prerelease=1"
         for spec in "$@"; do
             path="${spec%%#*}"
             [[ -f "${path}" ]] || { echo "ERROR: gpu_tuned_release_ready: asset ${path} not found." >&2; rm -f -- "${tmp}"; return 1; }
@@ -1756,14 +1774,14 @@ gpu_tuned_release_ready() {
 # every asset are exactly what release.sh's gates saw; then gpu_tuned_publish_release (clean tree, pushed, tag shape);
 # then the marker is renamed <marker>.published so the same gates cannot publish twice. Run it from the repo root.
 gpu_tuned_publish_ready() {
-    local marker="${1:?marker}" line k v repo="" tag="" title="" head="" notes="" notes_sha=""
+    local marker="${1:?marker}" line k v repo="" tag="" title="" head="" notes="" notes_sha="" prerelease=""
     local -a assets=() shas=()
     [[ -f "${marker}" ]] || { echo "ERROR: no ready-marker at ${marker} -- run tuned/release.sh first; it must pass every gate." >&2; return 1; }
     while IFS= read -r line; do
         k="${line%%=*}"; v="${line#*=}"
         case "${k}" in
             repo) repo="${v}" ;; tag) tag="${v}" ;; title) title="${v}" ;; head) head="${v}" ;;
-            notes) notes="${v}" ;; notes_sha256) notes_sha="${v}" ;;
+            notes) notes="${v}" ;; notes_sha256) notes_sha="${v}" ;; prerelease) prerelease="${v}" ;;
             asset) assets+=("${v}") ;; asset_sha256) shas+=("${v}") ;;
         esac
     done < "${marker}"
@@ -1780,7 +1798,7 @@ gpu_tuned_publish_ready() {
             || { echo "ERROR: ${path} changed or vanished since release.sh passed; run tuned/release.sh again." >&2; return 1; }
     done
     echo "Publishing ${repo}@${tag} (${#assets[@]} assets, HEAD ${head:0:9})..."
-    gpu_tuned_publish_release "${repo}" "${tag}" "${title}" "@${notes}" "${assets[@]}" || return 1
+    GPU_TUNED_PRERELEASE="${prerelease}" gpu_tuned_publish_release "${repo}" "${tag}" "${title}" "@${notes}" "${assets[@]}" || return 1
     mv -f -- "${marker}" "${marker}.published"
 }
 
@@ -2034,28 +2052,57 @@ gpu_tuned_date_label() {
         local seq="${BASH_REMATCH[2]}"   # saved first: gpu_tuned_valid_date's own regex overwrites BASH_REMATCH
         gpu_tuned_valid_date "${label}" || label=""
         [ -z "${label}" ] || [ "${seq}" = 0 ] || label="${label}.${seq}"
+    elif [[ "${v}" =~ ^v(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){0,3}-([1-9][0-9]{7})\.(0|[1-9][0-9]*)-[a-z][a-z0-9]*(-[a-z0-9]+)*-cu[0-9]+$ ]]; then
+        # native release tag v<upstream-version>-<date>.<seq>-<variant>-cu<cuda> (2026-11-13)
+        label="${BASH_REMATCH[4]}"
+        local vseq="${BASH_REMATCH[5]}"   # saved first: gpu_tuned_valid_date's own regex overwrites BASH_REMATCH
+        gpu_tuned_valid_date "${label}" || label=""
+        [ -z "${label}" ] || [ "${vseq}" = 0 ] || label="${label}.${vseq}"
     fi
     [ -z "${label}" ] || printf '%s\n' "${label}"
     return 0
 }
 
-# gpu_tuned_native_tag <variant> <cuda-tag> <label> -- the release tag of a native (non-wheel)
-# build: v0.<YYYYMMDD>.<seq>-<variant>-<cuda-tag>, e.g. v0.20261011.0-gb10-cu134. <label> is
+# gpu_tuned_native_tag_version <tag> -- the upstream version a native release tag names:
+# "1.0.0" for v1.0.0-<date>.<seq>-<variant>-cu<cuda>, "0" for the older v0.<date>.<seq>-... form
+# (which named no upstream version). Prints nothing (exit 0) for anything else.
+gpu_tuned_native_tag_version() {
+    local t="${1:-}"
+    [[ -n "$(gpu_tuned_date_label "${t}")" ]] || return 0
+    if [[ "${t}" =~ ^v0\.[1-9][0-9]{7}\. ]]; then printf '0\n'; return 0; fi
+    if [[ "${t}" =~ ^v([0-9.]+)-[1-9][0-9]{7}\. ]]; then printf '%s\n' "${BASH_REMATCH[1]}"; fi
+    return 0
+}
+
+# gpu_tuned_native_tag <variant> <cuda-tag> <label> [<upstream-version>] -- the release tag of a native
+# (non-wheel) build. With <upstream-version> (user decision 2026-11-13, docs/VERSIONING.md):
+# v<upstream-version>-<YYYYMMDD>.<seq>-<variant>-<cuda-tag>, e.g. v1.0.0-20261114.0-gb10-cu134, where the
+# version is the upstream release the source is based on (1-4 dot-separated canonical integers). Without
+# it, the older form v0.<YYYYMMDD>.<seq>-<variant>-<cuda-tag>, e.g. v0.20261011.0-gb10-cu134, for repos not
+# yet migrated; the 0 there names no version and ranks below any real one. <label> is
 # "<YYYYMMDD>[.<seq>]" from gpu_tuned_allocate_date_label; the sequence is always written here
 # (0 for a bare date), as a wheel version does too (user decision 2026-10-16). gpu_tuned_date_label reads the tag back.
 # A hyphenated variant stays hyphenated here -- v0.20261105.0-rtx50-win-cu134 -- because "-" is only a field
 # separator in a tag and the reader anchors on the trailing "-cu<digits>". Unlike a wheel label, which is dotted.
 gpu_tuned_native_tag() {
-    local variant="${1:-}" cuda_tag="${2:-}" label="${3:-}" date seq
+    local variant="${1:-}" cuda_tag="${2:-}" label="${3:-}" version="${4:-}" date seq
     date="${label%%.*}"
     seq="$(gpu_tuned_label_seq "${label}")"
     if ! gpu_tuned_valid_variant "${variant}" || [[ ! "${cuda_tag}" =~ ^cu[0-9]+$ ]] \
         || ! gpu_tuned_valid_date "${date}" || [[ ! "${seq}" =~ ^(0|[1-9][0-9]*)$ ]] \
         || [[ "${label}" != "${date}" && ( "${seq}" = 0 || "${label}" != "${date}.${seq}" ) ]]; then
-        echo "ERROR: gpu_tuned_native_tag: need <variant> <cuNNN> <YYYYMMDD[.seq]>, got '${variant}' '${cuda_tag}' '${label}'." >&2
+        echo "ERROR: gpu_tuned_native_tag: need <variant> <cuNNN> <YYYYMMDD[.seq]> [<upstream-version>], got '${variant}' '${cuda_tag}' '${label}' '${version}'." >&2
         return 1
     fi
-    printf 'v0.%s.%s-%s-%s\n' "${date}" "${seq}" "${variant}" "${cuda_tag}"
+    if [[ -z "${version}" ]]; then
+        printf 'v0.%s.%s-%s-%s\n' "${date}" "${seq}" "${variant}" "${cuda_tag}"
+        return 0
+    fi
+    if [[ ! "${version}" =~ ^(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){0,3}$ || "${version}" == 0 ]]; then
+        echo "ERROR: gpu_tuned_native_tag: upstream version '${version}' must be 1-4 dot-separated canonical integers (e.g. 1.0.0), and not 0 alone." >&2
+        return 1
+    fi
+    printf 'v%s-%s.%s-%s-%s\n' "${version}" "${date}" "${seq}" "${variant}" "${cuda_tag}"
 }
 
 # gpu_tuned_nvcc_compact [cuda-home] -- the CUDA release that <cuda-home>/bin/nvcc reports,
@@ -2294,8 +2341,11 @@ gpu_tuned_so_has_device_code() {
     co="${CUDA_HOME:+${CUDA_HOME}/bin/}cuobjdump"
     command -v "${co}" >/dev/null 2>&1 || { echo "ERROR: gpu_tuned_so_has_device_code: cuobjdump not found (set CUDA_HOME); cannot classify ${f}." >&2; return 2; }
     out="$({ "${co}" --list-elf "${f}"; "${co}" --list-ptx "${f}"; } 2>&1 || true)"
-    if printf '%s\n' "${out}" | grep -qE '^(ELF|PTX) file +[0-9]+:'; then return 0; fi
-    if printf '%s\n' "${out}" | grep -q 'does not contain device code'; then return 1; fi
+    # Here-strings, not printf | grep -q: grep -q exits at the first match, and under pipefail the printf that is
+    # still writing a long listing takes SIGPIPE (141), which read as "not classified" (hit 2026-11-15 on a
+    # 376-line libggml-cuda listing, about 1 run in 10).
+    if grep -qE '^(ELF|PTX) file +[0-9]+:' <<< "${out}"; then return 0; fi
+    if grep -q 'does not contain device code' <<< "${out}"; then return 1; fi
     echo "ERROR: gpu_tuned_so_has_device_code: cuobjdump could not classify ${f}: $(printf '%s' "${out}" | head -1)" >&2
     return 2
 }
@@ -3065,12 +3115,93 @@ PY
             [[ -s "${work}/reqs.txt" ]] || { echo "ERROR: the wheel resolved to no dependencies; the audit has nothing to check." >&2; rc=1; }
         fi
         if [[ ${rc} -eq 0 && ! -e "${work}/report.json.nodeps" ]]; then
-            "${work}/venv/bin/pip-audit" --no-deps --disable-pip -r "${work}/reqs.txt" --format json \
-                > "${work}/audit.json" 2> "${work}/audit.err" || true
-            [[ -s "${work}/audit.json" ]] || { sed 's/^/  /' "${work}/audit.err" >&2; echo "ERROR: pip-audit produced no result." >&2; rc=1; }
+            _gpu_tuned_pip_audit_verdict "${work}" "${GPU_TUNED_AUDIT_ALLOW_FILE:-${here}/audit_allow.txt}" || rc=1
         fi
-        if [[ ${rc} -eq 0 && ! -e "${work}/report.json.nodeps" ]]; then
-            python3 -I - "${work}/audit.json" "${GPU_TUNED_AUDIT_ALLOW_FILE:-${here}/audit_allow.txt}" <<'PY' || rc=1
+    } 2>&1 | tee "${log}"
+    # The block above runs in the pipeline's subshell, so its rc is lost; the RESULT line is the verdict.
+    grep -q '^RESULT: no vulnerable package has a fix available$' "${log}" || rc=1
+    rm -rf "${work}"
+    return "${rc}"
+}
+
+# gpu_tuned_audit_venv <venv-dir> <log-file> -- audit the Python packages installed in a build or test venv (H14): the
+# venv's `pip freeze --all` (pip and setuptools included), checked by pip-audit with the same pin, allow-file and verdict
+# as gpu_tuned_audit_deps (H9). H9 covers what a shipped wheel pulls in; this covers what a build ran with. A package with
+# a local version (torch==2.11.0+cpu, our own +gb10 wheels) is audited as its public base version, with a note: the
+# advisories for that release apply to it, and pip-audit would otherwise skip it. A direct-URL or editable install cannot
+# be audited and is listed as "not audited", never dropped. A check that cannot run is a failure (H4). Same rc and log
+# contract as H9: rc 0 only when the log ends with "RESULT: no vulnerable package has a fix available".
+gpu_tuned_audit_venv() {
+    local venv="${1:?usage: gpu_tuned_audit_venv <venv-dir> <log-file>}" log="${2:?usage: gpu_tuned_audit_venv <venv-dir> <log-file>}"
+    local here work rc=0
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"  # tuned/, where the vendored common.sh sits
+    work="$(mktemp -d)"
+    {
+        echo "=== dependency audit: packages installed in ${venv} ==="
+        echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ); pip-audit ${GPU_TUNED_PIP_AUDIT_VERSION}"
+        [[ -x "${venv}/bin/python" ]] || { echo "ERROR: ${venv}/bin/python not found: not a venv." >&2; rc=1; }
+        if [[ ${rc} -eq 0 ]]; then
+            "${venv}/bin/python" -m pip freeze --all --disable-pip-version-check > "${work}/freeze.txt" 2> "${work}/freeze.err" \
+                || { sed 's/^/  /' "${work}/freeze.err" >&2; echo "ERROR: pip freeze failed in ${venv}." >&2; rc=1; }
+        fi
+        if [[ ${rc} -eq 0 ]]; then
+            python3 -I - "${work}/freeze.txt" > "${work}/reqs.txt" <<'PY' || rc=1
+import re, sys
+from urllib.parse import unquote
+n = 0
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line or line.startswith("#"):
+        continue
+    m = re.fullmatch(r"([A-Za-z0-9][A-Za-z0-9._-]*)==([^+\s]+)(\+\S+)?", line)
+    if not m:
+        # "name @ <url>": installed from a URL or file (our own tuned wheels). A wheel file name carries the version.
+        u = re.fullmatch(r"([A-Za-z0-9][A-Za-z0-9._-]*) @ (\S+)", line)
+        fname = u and unquote(u.group(2).split("#", 1)[0].split("?", 1)[0].rsplit("/", 1)[-1])  # drop #sha256=..., ?query
+        w = u and re.fullmatch(r"[^/-]+-([^-+/]+)(\+[^-/]+)?-[^/]+\.whl", fname)
+        if not w:
+            sys.stderr.write(f"not audited (not a pinned release or a wheel file): {line}\n")
+            continue
+        name, ver = u.group(1), w.group(1)
+        sys.stderr.write(f"audited as {name}=={ver} (installed from {fname})\n")
+        sys.stdout.write(f"{name}=={ver}\n")
+        n += 1
+        continue
+    name, ver, local = m.groups()
+    if local:
+        sys.stderr.write(f"audited as {name}=={ver} (installed {name}=={ver}{local}, a local version)\n")
+    sys.stdout.write(f"{name}=={ver}\n")
+    n += 1
+if not n:
+    sys.stderr.write("ERROR: the venv lists no pinned packages; the audit has nothing to check.\n")
+    sys.exit(1)
+PY
+        fi
+        if [[ ${rc} -eq 0 ]]; then
+            python3 -m venv "${work}/venv" \
+                && "${work}/venv/bin/python" -m pip install --quiet --disable-pip-version-check "pip-audit==${GPU_TUNED_PIP_AUDIT_VERSION}" \
+                || { echo "ERROR: could not set up the audit venv (network?)." >&2; rc=1; }
+        fi
+        if [[ ${rc} -eq 0 ]]; then
+            _gpu_tuned_pip_audit_verdict "${work}" "${GPU_TUNED_AUDIT_ALLOW_FILE:-${here}/audit_allow.txt}" || rc=1
+        fi
+    } 2>&1 | tee "${log}"
+    # The block above runs in the pipeline's subshell, so its rc is lost; the RESULT line is the verdict.
+    grep -q '^RESULT: no vulnerable package has a fix available$' "${log}" || rc=1
+    rm -rf "${work}"
+    return "${rc}"
+}
+
+# _gpu_tuned_pip_audit_verdict <work-dir> <allow-file> -- run pip-audit (from <work-dir>/venv) on <work-dir>/reqs.txt
+# (name==version lines) and print the H9 report: "not audited" lines, "audited N packages", one ACCEPTED/VIOLATION/WARNING
+# line per advisory, and the RESULT verdict line. rc 0 only on "RESULT: no vulnerable package has a fix available".
+# Shared by gpu_tuned_audit_deps (H9) and gpu_tuned_audit_venv (H14).
+_gpu_tuned_pip_audit_verdict() {
+    local work="${1:?}" allow="${2:?}"
+    "${work}/venv/bin/pip-audit" --no-deps --disable-pip -r "${work}/reqs.txt" --format json \
+        > "${work}/audit.json" 2> "${work}/audit.err" || true
+    [[ -s "${work}/audit.json" ]] || { sed 's/^/  /' "${work}/audit.err" >&2; echo "ERROR: pip-audit produced no result." >&2; return 1; }
+    python3 -I - "${work}/audit.json" "${allow}" <<'PY'
 import json, sys
 audit_path, allow_path = sys.argv[1], sys.argv[2]
 allowed = {}
@@ -3111,12 +3242,6 @@ for dep in deps:
 sys.stdout.write("RESULT: " + ("FAILED" if failed else "no vulnerable package has a fix available") + "\n")
 sys.exit(1 if failed else 0)
 PY
-        fi
-    } 2>&1 | tee "${log}"
-    # The block above runs in the pipeline's subshell, so its rc is lost; the RESULT line is the verdict.
-    grep -q '^RESULT: no vulnerable package has a fix available$' "${log}" || rc=1
-    rm -rf "${work}"
-    return "${rc}"
 }
 
 # gpu_tuned_install_setuptools -- put the current setuptools release in the active build venv, last (C8). setuptools is a

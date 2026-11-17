@@ -2,17 +2,19 @@
 
 Written by sync-common.sh; commit it with the sync. One line per vendored file.
 
-when:   2026-11-09T20:56:12Z
+when:   2026-11-16T19:09:48Z
 target: common.sh
-base:   4af1bb6d1126de3d69facc03b8f948928fe95a36
-synced: 0f67487fe2223d43132362085c44df972fb18380
+base:   addd9fec5230cae499c87c8b01cfee4bcb202542
+synced: 1e4f59115bba72d2ffa11020a148415d6ba263cd
 result: all files resolved
 
 updated    tuned-common.sh
 unchanged  devices/gb10.conf
 unchanged  devices/n1x-win.conf
+unchanged  devices/rtx40-win.conf
 unchanged  devices/rtx40.conf
 unchanged  devices/rtx50-win.conf
 unchanged  devices/rtx50.conf
 unchanged  toolkits/cu133.env
 unchanged  toolkits/cu134.env
+unchanged  toolkits/cu135.env
