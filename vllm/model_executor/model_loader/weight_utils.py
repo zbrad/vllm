@@ -1079,6 +1079,18 @@ def _auto_direct_io(fs_type: str) -> bool:
         return False
 
 
+def _direct_io_device() -> torch.device | None:
+    """The device the direct reader stages batches on, or None for host buffers.
+
+    Device staging pipelines O_DIRECT reads with host-to-device copies through
+    pinned buffers, so it needs a CUDA device and pinned memory (not available
+    on WSL, for example); otherwise tensors come back in pageable host memory.
+    """
+    if not (current_platform.is_cuda() and current_platform.is_pin_memory_available()):
+        return None
+    return torch.device("cuda", torch.cuda.current_device())
+
+
 def safetensors_weights_iterator(
     hf_weights_files: list[str],
     use_tqdm_on_load: bool,
@@ -1181,8 +1193,23 @@ def safetensors_weights_iterator(
         sorted_files = _shuffle_files(sorted_files)
 
     direct_reader = (
-        DirectIOSafetensorsReader() if safetensors_load_strategy == "direct" else None
+        DirectIOSafetensorsReader(device=_direct_io_device())
+        if safetensors_load_strategy == "direct"
+        else None
     )
+    if direct_reader is not None:
+        # All files go to the reader at once, so its read-ahead runs across file
+        # boundaries (the progress bar then tracks reading, which leads loading).
+        yield from direct_reader.iter_files(
+            tqdm(
+                sorted_files,
+                desc=loading_desc,
+                disable=not enable_tqdm(use_tqdm_on_load),
+                bar_format=_BAR_FORMAT,
+            ),
+            lambda name: should_skip_weight(name, local_expert_ids),
+        )
+        return
     leftover_state_dict: dict[str, torch.Tensor] = {}
     for st_file in tqdm(
         sorted_files,
@@ -1190,11 +1217,7 @@ def safetensors_weights_iterator(
         disable=not enable_tqdm(use_tqdm_on_load),
         bar_format=_BAR_FORMAT,
     ):
-        if direct_reader is not None:
-            yield from direct_reader.iter_file(
-                st_file, lambda name: should_skip_weight(name, local_expert_ids)
-            )
-        elif safetensors_load_strategy == "eager":
+        if safetensors_load_strategy == "eager":
             with open(st_file, "rb") as f:
                 state_dict = load(f.read())
             for name, param in state_dict.items():
