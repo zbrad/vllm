@@ -624,7 +624,7 @@ class DirectIOSafetensorsReader:
         begin, end = info.data_offsets
         nbytes = end - begin
         if nbytes == 0:
-            return torch.empty(shape, dtype=dtype)
+            return torch.empty(shape, dtype=dtype, device=buffer.device)
         offset = header.data_start + begin - base
         chunk = buffer[offset : offset + nbytes]
         if chunk.data_ptr() % dtype.itemsize:
