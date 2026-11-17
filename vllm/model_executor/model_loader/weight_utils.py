@@ -1059,6 +1059,26 @@ def _prefetch_all_checkpoints(
     threading.Thread(target=_run_prefetch, daemon=True).start()
 
 
+# Local block-device filesystems, where an O_DIRECT read skips only the page
+# cache. On ZFS it would also skip the ARC/L2ARC, and network filesystems are
+# handled by auto-prefetch, so neither is switched automatically.
+_DIRECT_IO_AUTO_FS_TYPES = frozenset({"ext4", "xfs"})
+
+
+def _auto_direct_io(fs_type: str) -> bool:
+    """Whether the default strategy should read with O_DIRECT.
+
+    True on integrated GPUs, where the page cache filled by an mmap load shares
+    RAM with device memory, when the checkpoint is on a local ext4 or xfs.
+    """
+    if fs_type not in _DIRECT_IO_AUTO_FS_TYPES:
+        return False
+    try:
+        return current_platform.is_integrated_gpu(None)
+    except Exception:
+        return False
+
+
 def safetensors_weights_iterator(
     hf_weights_files: list[str],
     use_tqdm_on_load: bool,
@@ -1098,6 +1118,16 @@ def safetensors_weights_iterator(
         total_bytes / 1024**3,
         avail_bytes / 1024**3,
     )
+
+    if safetensors_load_strategy is None and _auto_direct_io(fs_type):
+        logger.info_once(
+            "Integrated GPU with checkpoints on a local %s filesystem: loading "
+            "safetensors with direct I/O (no page cache). Start vLLM with "
+            "--safetensors-load-strategy=lazy to memory-map them instead.",
+            fs_name,
+        )
+        safetensors_load_strategy = "direct"
+        loading_desc += " (direct I/O)"
 
     should_prefetch = safetensors_load_strategy == "prefetch"
     if safetensors_load_strategy is None:
