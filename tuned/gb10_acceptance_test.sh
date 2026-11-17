@@ -90,7 +90,7 @@ export VLLM_FLASH_ATTN_NO_PTX="${VLLM_FLASH_ATTN_NO_PTX-1}"
 # below. Confirmed 2026-09-12.
 #
 # DeepSeek-V3 (tiny-random): attempted to close the MLA-attention coverage
-# gap left by both DeepSeek-V4 stand-ins below being 100% skipped. Real
+# gap left while both DeepSeek-V4 stand-ins below were skipped. Real
 # MLA head dims, but shrunk too far for the stand-in's own good: FLASH_ATTN's
 # MLA prefill kernel only supports specific real-world (qk_nope_head_dim,
 # qk_rope_head_dim, v_head_dim) combinations, and this stand-in's
@@ -124,29 +124,28 @@ ACCEPT_MAX_NUM_SEQS="${ACCEPT_MAX_NUM_SEQS:-}"
 MODELS=(
   "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16::::NemotronH (dense, stand-in for Nemotron-3-Super-120B)"
   "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4::flashinfer::NemotronH (NVFP4 MoE, mamba_head_dim=64, stand-in for Nemotron-3-Super-120B's AOT-scoped MoE+SSU path)"
-  "yujiepan/deepseek-v4-tiny-random:fp8_ds_mla::deepgemm-sm121:DeepSeek-V4 MLA (tiny-random, stand-in for DeepSeek-V4-Flash)"
+  "yujiepan/deepseek-v4-tiny-random:fp8_ds_mla:::DeepSeek-V4 MLA (tiny-random, stand-in for DeepSeek-V4-Flash)"
   "silence09/DeepSeek-V4-Pro-Tiny:fp8_ds_mla::bad-checkpoint:DeepSeek-V4 MLA (Pro-Tiny, second stand-in for cross-check)"
   "yujiepan/qwen2-vl-tiny-random:::deps-gap-torchvision:Qwen2-VL (tiny-random, vision-language path + qwen_vl_triton_warmup torchvision guard)"
   "yujiepan/deepseek-v3-tiny-random:::mla-dims-too-small:DeepSeek-V3 MLA (tiny-random, BF16, closes the MLA-attention coverage gap)"
   "yujiepan/muse-spark-open-tiny-random:::trtllm-moe-sm100-only:Muse Spark (tiny-random, BF16, stand-in for Muse-Spark-Open-816B-A42B)"
 )
 
-# Known, confirmed reasons DeepSeek-V4 can't run on this stack today --
+# DeepSeek-V4 (tiny-random) runs: the DeepGEMM pin (82ca617e, cmake/external_projects/deepgemm.cmake) has the
+# arch_major == 12 branch for the (gran_mn=1, gran_k=32) SF transform that DeepSeek-V4's NVFP4 expert scales need
+# (the "Unknown SF transformation" gap, deepseek-ai/DeepGEMM#372). Until 2026-11-17 it was skipped as deepgemm-sm121;
+# the last blocker was the FA4 cute/ tree's flash_attn imports (cmake/external_projects/vllm_flash_attn.cmake).
+#
+# Known, confirmed reasons the remaining models can't run on this stack today --
 # these are documented skips, not failures of this test or of the gb10
 # rework itself:
-#   deepgemm-sm121: vLLM's vendored DeepGEMM CUDA library (.deps/deepgemm-src,
-#     confirmed against upstream deepseek-ai/DeepGEMM's latest commit too)
-#     has no SF-layout transform branch for arch_major=12 (SM120/121, i.e.
-#     GB10) at (gran_mn=1, gran_k=32) -- the granularity DeepSeek-V4's NVFP4
-#     expert scales use. Hits a hard C++ assertion ("Unknown SF
-#     transformation", csrc/apis/layout.hpp) during process_weights_after_
-#     loading, regardless of FLASHINFER_DISABLE_JIT. This is a vendored
-#     kernel gap, not something fixable from vLLM's Python side.
 #   bad-checkpoint: this specific community checkpoint's config uses a
 #     'hash_moe' mlp_layer_type not recognized by the installed
 #     transformers/huggingface_hub version -- a checkpoint-schema
-#     incompatibility unrelated to flashinfer or the deepgemm-sm121 gap
-#     above (which blocks DeepSeek-V4 on this stack regardless).
+#     incompatibility unrelated to flashinfer or DeepGEMM. Retried
+#     2026-11-17: the config now loads, but weight loading fails on a
+#     checkpoint tensor named 'lm_lm_head' ("There is no module or parameter
+#     named 'lm_lm_head' in DeepseekV4ForCausalLM"); still the checkpoint.
 #   deps-gap-torchvision: no aarch64/gb10 torchvision wheel exists (see
 #     requirements/gb10.txt); transformers' Qwen2-VL image processor
 #     hard-imports torchvision at module level, so vLLM can't even import

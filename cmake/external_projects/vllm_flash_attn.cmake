@@ -101,18 +101,27 @@ if(VLLM_FLASH_ATTN_PREBUILT_PKG)
     REGEX "/vllm_flash_attn/flash_attn_interface\\.py$" EXCLUDE
   )
 
-  # FA4 CuteDSL: symlink vllm/vllm_flash_attn/cute at the installed
-  # flash_attn package's cute/ dir. vllm/vllm_flash_attn/__init__.py already
-  # detects symlink mode and registers a virtual `flash_attn` module so the
-  # unrewritten `flash_attn.cute.*` imports inside these files resolve --
-  # the same mechanism the VLLM_FLASH_ATTN_SRC_DIR local-dev path below uses.
+  # FA4 CuteDSL: copy the installed flash_attn package's cute/ tree and
+  # rewrite its flash_attn.cute imports to vllm.vllm_flash_attn.cute, as the
+  # FetchContent path below does. A symlink (the local-dev path's mechanism)
+  # does not survive into a wheel: the wheel holds a plain copy, so
+  # vllm/vllm_flash_attn/__init__.py never registers its virtual
+  # `flash_attn` module, and the unrewritten imports load the real flash_attn
+  # package, whose __init__.py needs flash_attn_2_cuda, which our
+  # vllm_flash_attn wheel does not build.
   add_custom_target(_vllm_fa4_cutedsl_C)
   install(CODE "
-    set(LINK_TARGET \"${FLASH_ATTN_PKG_DIR}/cute\")
-    set(LINK_NAME \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn/cute\")
-    file(MAKE_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn\")
-    file(REMOVE_RECURSE \"\${LINK_NAME}\")
-    file(CREATE_LINK \"\${LINK_TARGET}\" \"\${LINK_NAME}\" SYMBOLIC)
+    file(REMOVE_RECURSE \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn/cute\")
+    file(GLOB_RECURSE CUTE_PY_FILES \"${FLASH_ATTN_PKG_DIR}/cute/*.py\")
+    foreach(SRC_FILE \${CUTE_PY_FILES})
+      file(RELATIVE_PATH REL_PATH \"${FLASH_ATTN_PKG_DIR}/cute\" \${SRC_FILE})
+      set(DST_FILE \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn/cute/\${REL_PATH}\")
+      get_filename_component(DST_DIR \${DST_FILE} DIRECTORY)
+      file(MAKE_DIRECTORY \${DST_DIR})
+      file(READ \${SRC_FILE} FILE_CONTENTS)
+      string(REPLACE \"flash_attn.cute\" \"vllm.vllm_flash_attn.cute\" FILE_CONTENTS \"\${FILE_CONTENTS}\")
+      file(WRITE \${DST_FILE} \"\${FILE_CONTENTS}\")
+    endforeach()
   " COMPONENT _vllm_fa4_cutedsl_C)
 
 else()
