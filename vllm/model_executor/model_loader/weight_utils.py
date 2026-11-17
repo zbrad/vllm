@@ -47,6 +47,10 @@ from vllm.model_executor.layers.quantization import (
     QuantizationConfig,
     get_quantization_config,
 )
+from vllm.model_executor.model_loader.direct_io import (
+    DirectIOSafetensorsReader,
+    resident_fraction,
+)
 from vllm.model_executor.model_loader.ep_weight_filter import (
     should_skip_weight,
 )
@@ -1058,6 +1062,43 @@ def _prefetch_all_checkpoints(
     threading.Thread(target=_run_prefetch, daemon=True).start()
 
 
+# Local block-device filesystems, where an O_DIRECT read skips only the page
+# cache. On ZFS it would also skip the ARC/L2ARC, and network filesystems are
+# handled by auto-prefetch, so neither is switched automatically.
+_DIRECT_IO_AUTO_FS_TYPES = frozenset({"ext4", "xfs"})
+# The automatic direct I/O default memory-maps instead when at least this share of
+# the checkpoint is already in the page cache: a warm mmap load of a small model
+# beats re-reading it from disk (on GB10, a 7.9 GB checkpoint loaded in
+# 0.28-0.39 s memory-mapped warm against 0.89 s with direct I/O).
+_DIRECT_IO_MAX_CACHED_FRACTION = 0.5
+
+
+def _auto_direct_io(fs_type: str) -> bool:
+    """Whether the default strategy should read with O_DIRECT.
+
+    True on integrated GPUs, where the page cache filled by an mmap load shares
+    RAM with device memory, when the checkpoint is on a local ext4 or xfs.
+    """
+    if fs_type not in _DIRECT_IO_AUTO_FS_TYPES:
+        return False
+    try:
+        return current_platform.is_integrated_gpu(None)
+    except Exception:
+        return False
+
+
+def _direct_io_device() -> torch.device | None:
+    """The device the direct reader stages batches on, or None for host buffers.
+
+    Device staging pipelines O_DIRECT reads with host-to-device copies through
+    pinned buffers, so it needs a CUDA device and pinned memory (not available
+    on WSL, for example); otherwise tensors come back in pageable host memory.
+    """
+    if not (current_platform.is_cuda() and current_platform.is_pin_memory_available()):
+        return None
+    return torch.device("cuda", torch.cuda.current_device())
+
+
 def safetensors_weights_iterator(
     hf_weights_files: list[str],
     use_tqdm_on_load: bool,
@@ -1077,6 +1118,8 @@ def safetensors_weights_iterator(
     loading_desc = "Loading safetensors checkpoint shards"
     if safetensors_load_strategy == "eager":
         loading_desc += " (eager)"
+    elif safetensors_load_strategy == "direct":
+        loading_desc += " (direct I/O)"
 
     sorted_files = sorted(hf_weights_files, key=_natural_sort_key)
 
@@ -1095,6 +1138,24 @@ def safetensors_weights_iterator(
         total_bytes / 1024**3,
         avail_bytes / 1024**3,
     )
+
+    if safetensors_load_strategy is None and _auto_direct_io(fs_type):
+        cached = resident_fraction(sorted_files)
+        if cached is not None and cached >= _DIRECT_IO_MAX_CACHED_FRACTION:
+            logger.info_once(
+                "Integrated GPU, but %.0f%% of the checkpoint is already in the "
+                "page cache: memory-mapping it instead of direct I/O.",
+                100 * cached,
+            )
+        else:
+            logger.info_once(
+                "Integrated GPU with checkpoints on a local %s filesystem: loading "
+                "safetensors with direct I/O (no page cache). Start vLLM with "
+                "--safetensors-load-strategy=lazy to memory-map them instead.",
+                fs_name,
+            )
+            safetensors_load_strategy = "direct"
+            loading_desc += " (direct I/O)"
 
     should_prefetch = safetensors_load_strategy == "prefetch"
     if safetensors_load_strategy is None:
@@ -1147,6 +1208,24 @@ def safetensors_weights_iterator(
     if shuffle_safetensors_files:
         sorted_files = _shuffle_files(sorted_files)
 
+    direct_reader = (
+        DirectIOSafetensorsReader(device=_direct_io_device())
+        if safetensors_load_strategy == "direct"
+        else None
+    )
+    if direct_reader is not None:
+        # All files go to the reader at once, so its read-ahead runs across file
+        # boundaries (the progress bar then tracks reading, which leads loading).
+        yield from direct_reader.iter_files(
+            tqdm(
+                sorted_files,
+                desc=loading_desc,
+                disable=not enable_tqdm(use_tqdm_on_load),
+                bar_format=_BAR_FORMAT,
+            ),
+            lambda name: should_skip_weight(name, local_expert_ids),
+        )
+        return
     leftover_state_dict: dict[str, torch.Tensor] = {}
     for st_file in tqdm(
         sorted_files,
