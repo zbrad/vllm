@@ -58,7 +58,7 @@ def _assert_same(got: dict[str, torch.Tensor], want: dict[str, torch.Tensor]):
         assert got[name].dtype == tensor.dtype, name
         assert got[name].shape == tensor.shape, name
         assert torch.equal(
-            got[name].reshape(-1).view(torch.uint8),
+            got[name].cpu().reshape(-1).view(torch.uint8),
             tensor.reshape(-1).view(torch.uint8),
         ), name
 
@@ -239,6 +239,76 @@ def test_direct_io_rejects_bad_sizes():
         DirectIOSafetensorsReader(max_buffer_bytes=1)
     with pytest.raises(ValueError):
         DirectIOSafetensorsReader(max_gap_bytes=-1)
+    with pytest.raises(ValueError):
+        DirectIOSafetensorsReader(chunk_bytes=PAGE + 1)
+    with pytest.raises(ValueError):
+        DirectIOSafetensorsReader(reads_in_flight=0)
+    with pytest.raises(ValueError):
+        # A slot could be reused while its own read is still pending.
+        DirectIOSafetensorsReader(ring_size=3, reads_in_flight=3)
+    with pytest.raises(ValueError):
+        DirectIOSafetensorsReader(device=torch.device("cpu"))
+    with pytest.raises(ValueError):
+        DirectIOSafetensorsReader(prefetch_batches=-1)
+
+
+_needs_cuda_pinned = pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="device staging needs CUDA"
+)
+
+
+@_needs_cuda_pinned
+@pytest.mark.parametrize("prefetch_batches", [0, 1, 2])
+@pytest.mark.parametrize(
+    ("ring_size", "reads_in_flight"), [(2, 1), (3, 2), (4, 3), (8, 3)]
+)
+def test_direct_io_device_ring_matches_safe_open(
+    direct_dir, ring_size, reads_in_flight, prefetch_batches
+):
+    """Chunks much smaller than a batch: every batch wraps the ring many times."""
+    path = direct_dir / "ring.safetensors"
+    gen = torch.Generator().manual_seed(1)
+    tensors = {
+        f"w{i}": torch.randint(0, 1 << 15, (3 * PAGE + 7 * i,), generator=gen).to(
+            torch.int16
+        )
+        for i in range(6)
+    }
+    save_file(tensors, str(path))
+    device = torch.device("cuda", torch.cuda.current_device())
+    reader = DirectIOSafetensorsReader(
+        max_buffer_bytes=16 * PAGE,
+        device=device,
+        chunk_bytes=PAGE,
+        ring_size=ring_size,
+        reads_in_flight=reads_in_flight,
+        prefetch_batches=prefetch_batches,
+    )
+    got = dict(reader.iter_file(str(path)))
+    assert reader.direct_files == 1 and reader.fallback_files == 0
+    assert all(t.device == device for t in got.values())
+    _assert_same(got, _reference(path))
+
+
+@_needs_cuda_pinned
+def test_direct_io_device_misaligned_layout_and_skip(direct_dir):
+    path = direct_dir / "dev_layout.safetensors"
+    f32 = torch.arange(5, dtype=torch.float32)
+    entries = [
+        ("u8_odd", "U8", [3], bytes([1, 2, 3])),
+        ("f32_misaligned", "F32", [5], f32.numpy().tobytes()),
+        ("skip_me", "U8", [8 * PAGE], bytes([0xAB]) * (8 * PAGE)),
+        ("scalar", "I64", [], struct.pack("<q", -7)),
+    ]
+    _write_raw_safetensors(path, entries, header_pad=3)
+    device = torch.device("cuda", torch.cuda.current_device())
+    reader = DirectIOSafetensorsReader(
+        device=device, chunk_bytes=PAGE, ring_size=2, reads_in_flight=1
+    )
+    got = dict(reader.iter_file(str(path), skip=lambda n: n == "skip_me"))
+    want = {k: v for k, v in _reference(path).items() if k != "skip_me"}
+    _assert_same(got, want)
+    assert got["scalar"].item() == -7
 
 
 def test_safetensors_weights_iterator_direct_matches_lazy(direct_dir):
@@ -322,3 +392,174 @@ def test_default_strategy_uses_direct_on_integrated_gpu(direct_dir, monkeypatch)
     readers.clear()
     dict(safetensors_weights_iterator([str(path)], False, "lazy"))
     assert readers == []
+
+
+def _many_batches(path) -> None:
+    save_file({f"w{i}": torch.full((PAGE,), float(i)) for i in range(32)}, str(path))
+
+
+@_needs_cuda_pinned
+def test_direct_io_read_ahead_stops_when_consumer_stops_early(direct_dir):
+    """Abandoning the iterator stops and joins the read-ahead thread."""
+    import threading
+
+    path = direct_dir / "early.safetensors"
+    _many_batches(path)
+    device = torch.device("cuda", torch.cuda.current_device())
+    reader = DirectIOSafetensorsReader(
+        max_buffer_bytes=4 * PAGE,
+        device=device,
+        chunk_bytes=PAGE,
+        ring_size=2,
+        reads_in_flight=1,
+        prefetch_batches=1,
+    )
+    it = reader.iter_file(str(path))
+    name, tensor = next(it)
+    assert name == "w0" and tensor.device == device
+    it.close()
+    assert not any(t.name == "direct-io-read-ahead" for t in threading.enumerate())
+
+
+@_needs_cuda_pinned
+def test_direct_io_read_ahead_first_read_rejected_falls_back(direct_dir, monkeypatch):
+    path = direct_dir / "dev_fallback.safetensors"
+    _many_batches(path)
+
+    def fake_preadv(*args):
+        raise OSError(errno.EINVAL, "Invalid argument")
+
+    monkeypatch.setattr(direct_io.os, "preadv", fake_preadv)
+    device = torch.device("cuda", torch.cuda.current_device())
+    reader = DirectIOSafetensorsReader(
+        max_buffer_bytes=4 * PAGE,
+        device=device,
+        chunk_bytes=PAGE,
+        ring_size=2,
+        reads_in_flight=1,
+        prefetch_batches=2,
+    )
+    got = dict(reader.iter_file(str(path)))
+    assert reader.fallback_files == 1 and reader.direct_files == 0
+    _assert_same(got, _reference(path))
+
+
+@_needs_cuda_pinned
+def test_direct_io_read_ahead_error_after_first_batch_raises(direct_dir, monkeypatch):
+    path = direct_dir / "dev_partway.safetensors"
+    _many_batches(path)
+    real_preadv = direct_io.os.preadv
+    calls = {"n": 0}
+
+    def flaky_preadv(fd, buffers, offset):
+        calls["n"] += 1
+        if calls["n"] > 20:  # past the first batch (each is 4-5 one-page reads)
+            raise OSError(errno.EINVAL, "Invalid argument")
+        return real_preadv(fd, buffers, offset)
+
+    monkeypatch.setattr(direct_io.os, "preadv", flaky_preadv)
+    device = torch.device("cuda", torch.cuda.current_device())
+    reader = DirectIOSafetensorsReader(
+        max_buffer_bytes=4 * PAGE,
+        device=device,
+        chunk_bytes=PAGE,
+        ring_size=2,
+        reads_in_flight=1,
+        prefetch_batches=2,
+    )
+    with pytest.raises(OSError, match="part-way"):
+        dict(reader.iter_file(str(path)))
+
+
+@_needs_cuda_pinned
+@pytest.mark.parametrize("prefetch_batches", [0, 1, 4])
+def test_direct_io_iter_files_matches_safe_open_across_files(
+    direct_dir, prefetch_batches
+):
+    """One read-ahead runs across files; it yields every file's tensors in order."""
+    paths = []
+    for i in range(4):
+        path = direct_dir / f"multi-{i}.safetensors"
+        save_file(
+            {f"f{i}.w{j}": torch.full((PAGE,), float(10 * i + j)) for j in range(5)},
+            str(path),
+        )
+        paths.append(str(path))
+    device = torch.device("cuda", torch.cuda.current_device())
+    reader = DirectIOSafetensorsReader(
+        max_buffer_bytes=8 * PAGE,
+        device=device,
+        chunk_bytes=PAGE,
+        ring_size=2,
+        reads_in_flight=1,
+        prefetch_batches=prefetch_batches,
+    )
+    got = list(reader.iter_files(paths))
+    assert [name for name, _ in got] == [
+        f"f{i}.w{j}" for i in range(4) for j in range(5)
+    ]
+    want: dict[str, torch.Tensor] = {}
+    for path in paths:
+        want |= _reference(path)
+    _assert_same(dict(got), want)
+    assert reader.direct_files == 4 and reader.fallback_files == 0
+
+
+@_needs_cuda_pinned
+def test_direct_io_iter_files_falls_back_for_one_file_and_continues(
+    direct_dir, monkeypatch
+):
+    paths = []
+    for i in range(3):
+        path = direct_dir / f"mixed-{i}.safetensors"
+        save_file(
+            {f"f{i}.w{j}": torch.full((PAGE,), float(i)) for j in range(3)}, str(path)
+        )
+        paths.append(str(path))
+    real_open = direct_io.DirectIOSafetensorsReader._open_direct
+
+    def open_direct(path):
+        if path.endswith("mixed-1.safetensors"):
+            raise direct_io._UnsupportedFile("no O_DIRECT here")
+        return real_open(path)
+
+    monkeypatch.setattr(
+        direct_io.DirectIOSafetensorsReader, "_open_direct", staticmethod(open_direct)
+    )
+    device = torch.device("cuda", torch.cuda.current_device())
+    reader = DirectIOSafetensorsReader(
+        device=device,
+        chunk_bytes=PAGE,
+        ring_size=2,
+        reads_in_flight=1,
+        prefetch_batches=2,
+    )
+    got = list(reader.iter_files(paths))
+    assert [name for name, _ in got] == [
+        f"f{i}.w{j}" for i in range(3) for j in range(3)
+    ]
+    assert reader.direct_files == 2 and reader.fallback_files == 1
+
+
+@_needs_cuda_pinned
+def test_direct_io_iter_files_early_stop_leaves_no_thread(direct_dir):
+    import threading
+
+    paths = []
+    for i in range(3):
+        path = direct_dir / f"stop-{i}.safetensors"
+        _many_batches(path)
+        paths.append(str(path))
+    device = torch.device("cuda", torch.cuda.current_device())
+    reader = DirectIOSafetensorsReader(
+        max_buffer_bytes=4 * PAGE,
+        device=device,
+        chunk_bytes=PAGE,
+        ring_size=2,
+        reads_in_flight=1,
+        prefetch_batches=1,
+    )
+    it = reader.iter_files(paths)
+    next(it)
+    it.close()
+    assert not any(t.name == "direct-io-read-ahead" for t in threading.enumerate())
