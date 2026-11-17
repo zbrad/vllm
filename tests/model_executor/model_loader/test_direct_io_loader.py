@@ -20,6 +20,7 @@ from vllm.model_executor.model_loader.direct_io import (
 from vllm.model_executor.model_loader.weight_utils import (
     safetensors_weights_iterator,
 )
+from vllm.utils.platform_utils import is_pin_memory_available
 
 PAGE = direct_io._ALIGN
 
@@ -253,7 +254,8 @@ def test_direct_io_rejects_bad_sizes():
 
 
 _needs_cuda_pinned = pytest.mark.skipif(
-    not torch.cuda.is_available(), reason="device staging needs CUDA"
+    not (torch.cuda.is_available() and is_pin_memory_available()),
+    reason="device staging needs CUDA and pinned host memory",
 )
 
 
@@ -299,6 +301,7 @@ def test_direct_io_device_misaligned_layout_and_skip(direct_dir):
         ("f32_misaligned", "F32", [5], f32.numpy().tobytes()),
         ("skip_me", "U8", [8 * PAGE], bytes([0xAB]) * (8 * PAGE)),
         ("scalar", "I64", [], struct.pack("<q", -7)),
+        ("empty", "F16", [0, 4], b""),
     ]
     _write_raw_safetensors(path, entries, header_pad=3)
     device = torch.device("cuda", torch.cuda.current_device())
@@ -308,6 +311,7 @@ def test_direct_io_device_misaligned_layout_and_skip(direct_dir):
     got = dict(reader.iter_file(str(path), skip=lambda n: n == "skip_me"))
     want = {k: v for k, v in _reference(path).items() if k != "skip_me"}
     _assert_same(got, want)
+    assert all(t.device == device for t in got.values())
     assert got["scalar"].item() == -7
 
 
