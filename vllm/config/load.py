@@ -10,7 +10,9 @@ from vllm.logger import init_logger
 
 DEFAULT_SAFETENSORS_PREFETCH_NUM_THREADS = 8
 DEFAULT_SAFETENSORS_PREFETCH_BLOCK_SIZE = 16 * 1024 * 1024
-SafetensorsLoadStrategy: TypeAlias = Literal["lazy", "eager", "prefetch", "torchao"]
+SafetensorsLoadStrategy: TypeAlias = Literal[
+    "lazy", "eager", "prefetch", "direct", "torchao"
+]
 
 if TYPE_CHECKING:
     from vllm.model_executor.model_loader import LoadFormats
@@ -81,6 +83,13 @@ class LoadConfig:
     - "prefetch": Checkpoint files are read into the OS page cache before
       workers load them, speeding up the model loading phase. Useful on
       network or high-latency storage.
+    - "direct": Tensor data is read with O_DIRECT into page-aligned host
+      buffers, bypassing the OS page cache, and each tensor is a view into one
+      of those buffers. Nothing is left in the page cache after loading, which
+      matters on integrated GPUs where page cache and device memory share RAM.
+      Files on a filesystem without O_DIRECT support fall back to lazy loading
+      with a warning. Note that O_DIRECT also bypasses any caching layer of the
+      filesystem itself (e.g. the ZFS ARC), so it reads from the backing device.
     - "torchao": Weights are loaded in upfront and then reconstructed
       into torchao tensor subclasses. This is used when the checkpoint
       was quantized using torchao and saved using safetensors.
