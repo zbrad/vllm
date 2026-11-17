@@ -375,6 +375,8 @@ def test_default_strategy_uses_direct_on_integrated_gpu(direct_dir, monkeypatch)
     path = direct_dir / "auto.safetensors"
     save_file({"a": torch.arange(10), "b": torch.ones(3)}, str(path))
     monkeypatch.setattr(weight_utils, "_auto_direct_io", lambda fs_type: True)
+    # The file was just written, so it is in the page cache: say it is not.
+    monkeypatch.setattr(weight_utils, "resident_fraction", lambda paths: 0.0)
     readers = []
     real = weight_utils.DirectIOSafetensorsReader
 
@@ -577,3 +579,43 @@ def test_direct_io_header_metadata_colliding_with_entry_fields(direct_dir):
     got = dict(reader.iter_file(str(path)))
     assert reader.direct_files == 1
     _assert_same(got, _reference(path))
+
+
+def test_resident_fraction_tracks_the_page_cache(direct_dir):
+    path = direct_dir / "resident.safetensors"
+    save_file({"w": torch.ones(64 * PAGE)}, str(path))
+    with open(path, "rb") as f:
+        f.read()
+    assert direct_io.resident_fraction([str(path)]) > 0.9
+    fd = os.open(str(path), os.O_RDONLY)
+    try:
+        os.fsync(fd)
+        os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+    finally:
+        os.close(fd)
+    assert direct_io.resident_fraction([str(path)]) < 0.5
+    assert direct_io.resident_fraction([]) is None
+
+
+@pytest.mark.parametrize(
+    ("cached", "uses_direct"), [(0.0, True), (0.49, True), (0.5, False), (1.0, False)]
+)
+def test_default_strategy_keeps_mmap_when_mostly_cached(
+    direct_dir, monkeypatch, cached, uses_direct
+):
+    path = direct_dir / "cached.safetensors"
+    save_file({"a": torch.arange(10), "b": torch.ones(3)}, str(path))
+    monkeypatch.setattr(weight_utils, "_auto_direct_io", lambda fs_type: True)
+    monkeypatch.setattr(weight_utils, "resident_fraction", lambda paths: cached)
+    readers = []
+    real = weight_utils.DirectIOSafetensorsReader
+
+    def recording_reader(*args, **kwargs):
+        reader = real(*args, **kwargs)
+        readers.append(reader)
+        return reader
+
+    monkeypatch.setattr(weight_utils, "DirectIOSafetensorsReader", recording_reader)
+    got = dict(safetensors_weights_iterator([str(path)], False, None))
+    _assert_same(got, _reference(path))
+    assert (len(readers) == 1) is uses_direct
