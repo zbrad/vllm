@@ -46,6 +46,7 @@ from vllm.model_executor.layers.quantization import (
     QuantizationConfig,
     get_quantization_config,
 )
+from vllm.model_executor.model_loader.direct_io import DirectIOSafetensorsReader
 from vllm.model_executor.model_loader.ep_weight_filter import (
     should_skip_weight,
 )
@@ -1140,6 +1141,8 @@ def safetensors_weights_iterator(
     loading_desc = "Loading safetensors checkpoint shards"
     if safetensors_load_strategy == "eager":
         loading_desc += " (eager)"
+    elif safetensors_load_strategy == "direct":
+        loading_desc += " (direct I/O)"
 
     sorted_files = sorted(hf_weights_files, key=_natural_sort_key)
 
@@ -1210,6 +1213,9 @@ def safetensors_weights_iterator(
     if shuffle_safetensors_files:
         sorted_files = _shuffle_files(sorted_files)
 
+    direct_reader = (
+        DirectIOSafetensorsReader() if safetensors_load_strategy == "direct" else None
+    )
     leftover_state_dict: dict[str, torch.Tensor] = {}
     for st_file in tqdm(
         sorted_files,
@@ -1217,7 +1223,11 @@ def safetensors_weights_iterator(
         disable=not enable_tqdm(use_tqdm_on_load),
         bar_format=_BAR_FORMAT,
     ):
-        if safetensors_load_strategy == "eager":
+        if direct_reader is not None:
+            yield from direct_reader.iter_file(
+                st_file, lambda name: should_skip_weight(name, local_expert_ids)
+            )
+        elif safetensors_load_strategy == "eager":
             with open(st_file, "rb") as f:
                 state_dict = load(f.read())
             for name, param in state_dict.items():
