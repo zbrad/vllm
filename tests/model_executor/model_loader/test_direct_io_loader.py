@@ -13,7 +13,7 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 
 from vllm.config.load import LoadConfig
-from vllm.model_executor.model_loader import direct_io
+from vllm.model_executor.model_loader import direct_io, weight_utils
 from vllm.model_executor.model_loader.direct_io import (
     DirectIOSafetensorsReader,
 )
@@ -271,3 +271,54 @@ def test_load_config_accepts_direct():
     assert LoadConfig(safetensors_load_strategy="direct").safetensors_load_strategy == (
         "direct"
     )
+
+
+@pytest.mark.parametrize(
+    ("integrated", "fs_type", "expected"),
+    [
+        (True, "ext4", True),
+        (True, "xfs", True),
+        (True, "zfs", False),
+        (True, "nfs4", False),
+        (True, "", False),
+        (False, "ext4", False),
+    ],
+)
+def test_auto_direct_io_selection(monkeypatch, integrated, fs_type, expected):
+    monkeypatch.setattr(
+        weight_utils.current_platform,
+        "is_integrated_gpu",
+        lambda device_id=0: integrated,
+    )
+    assert weight_utils._auto_direct_io(fs_type) is expected
+
+
+def test_auto_direct_io_survives_platform_error(monkeypatch):
+    def boom(device_id=0):
+        raise RuntimeError("no device")
+
+    monkeypatch.setattr(weight_utils.current_platform, "is_integrated_gpu", boom)
+    assert weight_utils._auto_direct_io("ext4") is False
+
+
+def test_default_strategy_uses_direct_on_integrated_gpu(direct_dir, monkeypatch):
+    path = direct_dir / "auto.safetensors"
+    save_file({"a": torch.arange(10), "b": torch.ones(3)}, str(path))
+    monkeypatch.setattr(weight_utils, "_auto_direct_io", lambda fs_type: True)
+    readers = []
+    real = weight_utils.DirectIOSafetensorsReader
+
+    def recording_reader(*args, **kwargs):
+        reader = real(*args, **kwargs)
+        readers.append(reader)
+        return reader
+
+    monkeypatch.setattr(weight_utils, "DirectIOSafetensorsReader", recording_reader)
+    got = dict(safetensors_weights_iterator([str(path)], False, None))
+    _assert_same(got, _reference(path))
+    assert len(readers) == 1 and readers[0].direct_files == 1
+
+    # An explicit strategy is never overridden.
+    readers.clear()
+    dict(safetensors_weights_iterator([str(path)], False, "lazy"))
+    assert readers == []
