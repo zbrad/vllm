@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import gc
 import glob
 import os
 import time
@@ -537,7 +538,21 @@ class DefaultModelLoader(BaseModelLoader):
         self._init_ep_weight_filter(model, model_config)
         self._init_mm_encoder_only_weight_filter(model, model_config)
 
-        loaded_weights = model.load_weights(self.get_all_weights(model_config, model))
+        # Pause the cyclic GC while weights load. Loading creates on the order of
+        # a hundred thousand tensor objects, which triggers full collections that
+        # hold the GIL for hundreds of milliseconds each (2 x ~270 ms measured on
+        # a 120B MoE checkpoint), stalling the loader and any read-ahead thread.
+        # Reference counting still frees the loaded tensors; cycles are collected
+        # once loading finishes.
+        gc_was_enabled = gc.isenabled()
+        gc.disable()
+        try:
+            loaded_weights = model.load_weights(
+                self.get_all_weights(model_config, model)
+            )
+        finally:
+            if gc_was_enabled:
+                gc.enable()
 
         self.counter_after_loading_weights = time.perf_counter()
         logger.info_once(
