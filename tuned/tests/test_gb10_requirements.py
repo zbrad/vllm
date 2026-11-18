@@ -17,9 +17,10 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Substituted on purpose: each file points these at the zbrad wheels for its variant (see the file's header).
-SUBSTITUTED = {"torch", "flashinfer-python"}
+# gb10 also takes zbrad/vision's torchvision (0.29.2, built against its tuned torch; cuda.txt pins 0.29.0).
+SUBSTITUTED = {"gb10": {"torch", "flashinfer-python", "torchvision"}, "rtx40": {"torch", "flashinfer-python"}}
 # Omitted on purpose: no build against the tuned torch exists for these, so a pin would not match it. Add one here only
-# with the reason in the requirements file.
+# with the reason in the requirements file. A variant that pins one of them substitutes it instead (above).
 OMITTED = {"torchaudio", "torchvision", "torchcodec", "pynvvideocodec", "instanttensor"}
 # The pip CUDA components, pinned to the cu134 toolkit in both files (humming-kernels[cu13] leaves them unversioned).
 CUDA_COMPONENTS = {"nvidia-cuda-runtime", "nvidia-cuda-nvcc", "nvidia-cuda-nvrtc", "nvidia-nvvm", "nvidia-cuda-crt"}
@@ -58,7 +59,7 @@ def test_variant_pins_match_cuda_pins_except_the_declared_ones(variant: str) -> 
     drifted = sorted(
         f"{name}: cuda.txt {cuda[name]!r} vs {variant}.txt {pins[name]!r}"
         for name in cuda
-        if name in pins and name not in SUBSTITUTED and cuda[name] != pins[name]
+        if name in pins and name not in SUBSTITUTED[variant] and cuda[name] != pins[name]
     )
     assert not drifted, f"{variant}.txt pins differ from cuda.txt:\n  " + "\n  ".join(drifted)
 

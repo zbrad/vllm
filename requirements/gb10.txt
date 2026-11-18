@@ -18,9 +18,11 @@
 numba == 0.65.0 # Required for N-gram speculative decoding
 
 torch @ https://github.com/zbrad/pytorch/releases/download/v2.15.0%2Bgb10.cu134.20261112.0/torch-2.15.0%2Bgb10.cu134.20261112.0-cp314-cp314-linux_aarch64.whl
-# No aarch64/gb10 torchaudio or torchvision build exists yet (unlike
-# flash-attention/flashinfer, these haven't been forked/built for GB10) --
-# omitted rather than pinned to versions that won't match this torch build.
+# torchvision from zbrad/vision, built against exactly the torch above (its extension links the -tuned torch
+# libraries; image codecs are not built). transformers' Qwen2-VL image processor imports it at module level, so
+# without it no Qwen VL or Qwen3.5/3.6/3.8 model can load.
+torchvision @ https://github.com/zbrad/vision/releases/download/v0.29.2%2Bgb10.cu134.20261112.0/torchvision-0.29.2%2Bgb10.cu134.20261112.0-py3-none-linux_aarch64.whl
+# No aarch64/gb10 torchaudio build exists yet -- omitted rather than pinned to a version that won't match this torch.
 # PyNvVideoCodec==2.1.0; python_version < "3.13"
 # PyNvVideoCodec>=2.0.4; python_version >= "3.13"
 

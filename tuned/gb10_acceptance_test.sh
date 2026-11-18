@@ -84,10 +84,10 @@ export VLLM_FLASH_ATTN_NO_PTX="${VLLM_FLASH_ATTN_NO_PTX-1}"
 # imported without torchvision -- transformers/models/qwen2_vl/image_
 # processing_qwen2_vl.py hard-imports `torchvision.transforms.v2` at
 # module level, and vllm/model_executor/models/qwen2_vl.py pulls smart_
-# resize from that module at import time. No aarch64/gb10 torchvision
-# build exists (see requirements/gb10.txt), so this blocks every Qwen2-VL
-# model on this stack, not just this tiny stand-in -- see deps-gap-torchvision
-# below. Confirmed 2026-09-12.
+# resize from that module at import time. Confirmed 2026-09-12. Since
+# 2026-11-17 gb10 depends on zbrad/vision's torchvision (requirements/gb10.txt)
+# and this stand-in runs there; other variants have no torchvision yet and keep
+# the deps-gap-torchvision skip below.
 #
 # DeepSeek-V3 (tiny-random): attempted to close the MLA-attention coverage
 # gap left while both DeepSeek-V4 stand-ins below were skipped. Real
@@ -120,13 +120,16 @@ fi
 ACCEPT_GPU_MEM_UTIL="${ACCEPT_GPU_MEM_UTIL:-0.30}"
 # Empty means vLLM's own default (gb10).
 ACCEPT_MAX_NUM_SEQS="${ACCEPT_MAX_NUM_SEQS:-}"
+# torchvision is a gb10 dependency only (requirements/gb10.txt); elsewhere the Qwen2-VL stand-in cannot import.
+QWEN2_VL_SKIP="deps-gap-torchvision"
+[[ "${GPU_TUNED_VARIANT:-gb10}" == "gb10" ]] && QWEN2_VL_SKIP=""
 
 MODELS=(
   "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16::::NemotronH (dense, stand-in for Nemotron-3-Super-120B)"
   "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4::flashinfer::NemotronH (NVFP4 MoE, mamba_head_dim=64, stand-in for Nemotron-3-Super-120B's AOT-scoped MoE+SSU path)"
   "yujiepan/deepseek-v4-tiny-random:fp8_ds_mla:::DeepSeek-V4 MLA (tiny-random, stand-in for DeepSeek-V4-Flash)"
   "silence09/DeepSeek-V4-Pro-Tiny:fp8_ds_mla::bad-checkpoint:DeepSeek-V4 MLA (Pro-Tiny, second stand-in for cross-check)"
-  "yujiepan/qwen2-vl-tiny-random:::deps-gap-torchvision:Qwen2-VL (tiny-random, vision-language path + qwen_vl_triton_warmup torchvision guard)"
+  "yujiepan/qwen2-vl-tiny-random:::${QWEN2_VL_SKIP}:Qwen2-VL (tiny-random, vision-language path + qwen_vl_triton_warmup torchvision guard)"
   "yujiepan/deepseek-v3-tiny-random:::mla-dims-too-small:DeepSeek-V3 MLA (tiny-random, BF16, closes the MLA-attention coverage gap)"
   "yujiepan/muse-spark-open-tiny-random:::trtllm-moe-sm100-only:Muse Spark (tiny-random, BF16, stand-in for Muse-Spark-Open-816B-A42B)"
 )
@@ -146,12 +149,11 @@ MODELS=(
 #     2026-11-17: the config now loads, but weight loading fails on a
 #     checkpoint tensor named 'lm_lm_head' ("There is no module or parameter
 #     named 'lm_lm_head' in DeepseekV4ForCausalLM"); still the checkpoint.
-#   deps-gap-torchvision: no aarch64/gb10 torchvision wheel exists (see
-#     requirements/gb10.txt); transformers' Qwen2-VL image processor
-#     hard-imports torchvision at module level, so vLLM can't even import
-#     the model class. Blocks every Qwen2-VL model on this stack, not a
-#     property of this specific tiny-random checkpoint -- revisit once
-#     torchvision is built for GB10.
+#   deps-gap-torchvision: the variant has no torchvision wheel (gb10 has one
+#     since 2026-11-17, requirements/gb10.txt); transformers' Qwen2-VL image
+#     processor hard-imports torchvision at module level, so vLLM can't even
+#     import the model class. Blocks every Qwen2-VL model on that variant, not
+#     a property of this specific tiny-random checkpoint.
 #   mla-dims-too-small: FLASH_ATTN's MLA prefill kernel only supports
 #     specific real-world head-dim combinations; this stand-in's shrunk
 #     (16, 16, 16) qk_nope/qk_rope/v_head dims aren't among them
