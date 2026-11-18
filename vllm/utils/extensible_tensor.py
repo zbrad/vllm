@@ -209,7 +209,11 @@ _DLManagedTensor._fields_ = [
 _PyCapsule_New = ctypes.PYFUNCTYPE(
     ctypes.py_object, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p
 )(("PyCapsule_New", ctypes.pythonapi))
-_malloc = ctypes.CDLL(None).malloc
+# CDLL(None) is dlopen(NULL), which Windows has no equivalent of: take malloc
+# from the Universal CRT that CPython links against.
+_malloc = (
+    ctypes.CDLL("ucrtbase") if sys.platform == "win32" else ctypes.CDLL(None)
+).malloc
 _malloc.restype = ctypes.c_void_p
 _malloc.argtypes = [ctypes.c_size_t]
 
