@@ -180,7 +180,9 @@ if [[ ! -f "${NOTES}" ]]; then
         echo "- Built from commit ${BUILD_COMMIT}; tested at ${TESTED_COMMIT}"
         echo "- Upstream base: ${GPU_TUNED_UPSTREAM_REF} merge-base $(git merge-base HEAD "${GPU_TUNED_UPSTREAM_REF}" 2>/dev/null || echo unknown)"
         if [[ -n "${GPU_TUNED_FLASH_ATTN_WHEEL_URL}" ]]; then
-            echo "- Prebuilt dependencies: requirements/${GPU_TUNED_VARIANT}.txt (torch, flashinfer) and ${GPU_TUNED_FLASH_ATTN_WHEEL_URL}"
+            # The URL-pinned names in the requirements file, so the list follows it (gb10 added torchvision).
+            prebuilt="$(sed -nE 's/^([A-Za-z0-9_.-]+) @ .*/\1/p' "requirements/${GPU_TUNED_VARIANT}.txt" | paste -sd, - | sed 's/,/, /g')"
+            echo "- Prebuilt dependencies: requirements/${GPU_TUNED_VARIANT}.txt (${prebuilt}) and ${GPU_TUNED_FLASH_ATTN_WHEEL_URL}"
         fi
         echo "- Wheel sha256: ${WHEEL_SHA}"
         echo ""
