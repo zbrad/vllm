@@ -16,7 +16,7 @@
 #   2. the import check build.sh used to run at its end: vllm imports and FA2 or FA3 flash-attn loads;
 #   3. tuned/gb10_acceptance_test.sh: small stand-ins for NemotronH and DeepSeek-V4, load and generate
 #      (needs a Hugging Face download; a stand-in is not the target model);
-#   4. python -m pytest tuned/tests: the tuned tooling's own tests (no GPU).
+#   4. python -m pytest tuned/tests: the tuned tooling's own tests (no GPU, except the reshape_and_cache_flash check).
 # Skips by design, named in the log header: everything in tests/ (upstream's suite) and multi-GPU
 # behaviour (a tuned build is single-GPU: CUDA_VISIBLE_DEVICES is pinned to one device).
 #
