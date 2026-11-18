@@ -1,0 +1,131 @@
+"""Tests for vllm/ext/tuned_build_check.py (the load-time variant and CUDA-tag check).
+
+Each test builds small shared objects with gcc and stamps them with objcopy, the
+way tuned/common.sh stamps real ones.
+
+Run from the repo root:
+    python -m pytest tuned/tests/test_tuned_build_check.py
+"""
+
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from vllm.ext.tuned_build_check import TunedBuildCheck
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("gcc") is None or shutil.which("objcopy") is None,
+    reason="needs gcc and objcopy",
+)
+
+
+class stamped_library:
+    """Builds and stamps throwaway shared objects in one directory."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.base = root / "base.so"
+        source = root / "empty.c"
+        source.write_text("int tuned_build_check_probe(void) { return 0; }\n")
+        subprocess.run(
+            ["gcc", "-shared", "-fPIC", "-o", str(self.base), str(source)], check=True
+        )
+
+    def make(self, name: str, variant: str | None, tag: str = "cu134") -> Path:
+        """A copy of the base library, stamped unless `variant` is None."""
+        path = self.root / name
+        shutil.copyfile(self.base, path)
+        if variant is not None:
+            stamp = self.root / f"{name}.json"
+            stamp.write_text(
+                json.dumps(
+                    {
+                        "schema": "tuned-build-info/1",
+                        "package": name.split(".")[0],
+                        "release": f"1.0+{variant}.{tag}.20261117.0",
+                        "variant": variant,
+                        "cuda": {"tag": tag},
+                    }
+                )
+            )
+            subprocess.run(
+                [
+                    "objcopy",
+                    "--add-section",
+                    f".tuned_build_info={stamp}",
+                    str(path),
+                ],
+                check=True,
+            )
+        return path
+
+
+@pytest.fixture
+def libs(tmp_path: Path) -> stamped_library:
+    return stamped_library(tmp_path)
+
+
+def test_read_stamp_returns_the_json(libs: stamped_library) -> None:
+    stamp = TunedBuildCheck.read_stamp(libs.make("vllm.so", "gb10"))
+    assert stamp is not None
+    assert stamp["variant"] == "gb10"
+    assert stamp["cuda"]["tag"] == "cu134"
+
+
+def test_read_stamp_unstamped_or_not_elf_is_none(
+    libs: stamped_library, tmp_path: Path
+) -> None:
+    text = tmp_path / "notes.txt"
+    text.write_text("not an ELF file\n")
+    assert TunedBuildCheck.read_stamp(libs.make("plain.so", None)) is None
+    assert TunedBuildCheck.read_stamp(text) is None
+    assert TunedBuildCheck.read_stamp(tmp_path / "missing.so") is None
+
+
+def test_check_matching_stamps_passes(libs: stamped_library) -> None:
+    ref = libs.make("vllm.so", "gb10")
+    TunedBuildCheck.check(ref, [libs.make("torch.so", "gb10"), ref])
+
+
+def test_check_unstamped_candidate_is_ignored(libs: stamped_library) -> None:
+    TunedBuildCheck.check(libs.make("vllm.so", "gb10"), [libs.make("c10.so", None)])
+
+
+def test_check_unstamped_reference_checks_nothing(libs: stamped_library) -> None:
+    TunedBuildCheck.check(libs.make("vllm.so", None), [libs.make("torch.so", "rtx40")])
+
+
+def test_check_variant_mismatch_raises(libs: stamped_library) -> None:
+    other = libs.make("torch.so", "rtx40")
+    with pytest.raises(ImportError) as err:
+        TunedBuildCheck.check(libs.make("vllm.so", "gb10"), [other])
+    message = str(err.value)
+    assert str(other) in message
+    assert "variant=rtx40" in message and "variant=gb10" in message
+
+
+def test_check_cuda_tag_mismatch_raises(libs: stamped_library) -> None:
+    other = libs.make("torch.so", "gb10", tag="cu130")
+    with pytest.raises(ImportError) as err:
+        TunedBuildCheck.check(libs.make("vllm.so", "gb10"), [other])
+    message = str(err.value)
+    assert "cuda.tag=cu130" in message and "cuda.tag=cu134" in message
+
+
+def test_mapped_files_keeps_file_paths_once(tmp_path: Path) -> None:
+    maps = tmp_path / "maps"
+    maps.write_text(
+        "aaaa-bbbb r-xp 00000000 08:01 1 /opt/lib/libtorch_cuda.so\n"
+        "bbbb-cccc r--p 00010000 08:01 1 /opt/lib/libtorch_cuda.so\n"
+        "cccc-dddd rw-p 00000000 00:00 0 \n"
+        "dddd-eeee rw-p 00000000 00:00 0 [heap]\n"
+        "eeee-ffff r-xp 00000000 08:01 2 /opt/lib/old.so (deleted)\n"
+        "ffff-0000 r-xp 00000000 08:01 3 /opt/my dir/lib.so\n"
+    )
+    assert TunedBuildCheck._mapped_files(maps) == [
+        Path("/opt/lib/libtorch_cuda.so"),
+        Path("/opt/my dir/lib.so"),
+    ]

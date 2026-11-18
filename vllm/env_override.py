@@ -946,5 +946,12 @@ if not is_torch_equal_or_newer("2.16.0.dev"):
 # setdefault: an explicit value, even an empty one, still wins.
 from vllm.ext.tuned_flags import TunedFlags as _TunedFlags
 
+# A library from another variant or toolkit fails here, by name, instead of later
+# with a missing symbol (vllm/ext/tuned_build_check.py). torch is loaded above;
+# vllm's own extension modules are not yet.
+from vllm.ext.tuned_build_check import TunedBuildCheck as _TunedBuildCheck
+
+_TunedBuildCheck.run()
+
 if _TunedFlags.FLASHINFER_DISABLE_JIT:
     os.environ.setdefault("FLASHINFER_DISABLE_JIT", "1")
