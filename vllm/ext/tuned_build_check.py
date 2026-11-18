@@ -12,7 +12,8 @@ failed later with a missing symbol or a wrong kernel.
 
 `TunedBuildCheck.run()` is called from vllm/env_override.py after torch is
 imported and before vllm's own extension modules load. It takes vllm's own
-stamp as the reference and compares `variant` and `cuda.tag` against every
+stamp as the reference and compares `variant` and `cuda.tag` (each when both
+stamps carry it) against every
 stamped library mapped into the process, plus the stamped extension modules
 of vllm and vllm_flash_attn that load later. Unstamped files are ignored, and
 with no reference stamp (a source checkout) nothing is checked.
@@ -145,7 +146,11 @@ class TunedBuildCheck:
             if stamp is None:
                 continue
             found = TunedBuildCheck._axes(stamp)
-            if found != expected:
+            # A field missing from either stamp (an older stamp) is not compared.
+            if any(
+                f is not None and e is not None and f != e
+                for f, e in zip(found, expected)
+            ):
                 raise ImportError(
                     f"tuned build mismatch: {path} is variant={found[0]} "
                     f"cuda.tag={found[1]} (package {stamp.get('package')}, "

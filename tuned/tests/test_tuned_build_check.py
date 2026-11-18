@@ -34,7 +34,9 @@ class stamped_library:
             ["gcc", "-shared", "-fPIC", "-o", str(self.base), str(source)], check=True
         )
 
-    def make(self, name: str, variant: str | None, tag: str = "cu134") -> Path:
+    def make(
+        self, name: str, variant: str | None, tag: str | None = "cu134"
+    ) -> Path:
         """A copy of the base library, stamped unless `variant` is None."""
         path = self.root / name
         shutil.copyfile(self.base, path)
@@ -47,7 +49,7 @@ class stamped_library:
                         "package": name.split(".")[0],
                         "release": f"1.0+{variant}.{tag}.20261117.0",
                         "variant": variant,
-                        "cuda": {"tag": tag},
+                        "cuda": {"tag": tag} if tag else {},
                     }
                 )
             )
@@ -113,6 +115,13 @@ def test_check_cuda_tag_mismatch_raises(libs: stamped_library) -> None:
         TunedBuildCheck.check(libs.make("vllm.so", "gb10"), [other])
     message = str(err.value)
     assert "cuda.tag=cu130" in message and "cuda.tag=cu134" in message
+
+
+def test_check_field_missing_from_a_stamp_is_not_compared(
+    libs: stamped_library,
+) -> None:
+    ref = libs.make("vllm.so", "gb10")
+    TunedBuildCheck.check(ref, [libs.make("torch.so", "gb10", tag=None)])
 
 
 def test_mapped_files_keeps_file_paths_once(tmp_path: Path) -> None:
