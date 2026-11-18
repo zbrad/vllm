@@ -98,7 +98,10 @@ class TunedBuildCheck:
 
     @staticmethod
     def _mapped_files(maps: Path) -> list[Path]:
-        """Files mapped into this process, in first-mapped order."""
+        """Regular files mapped into this process, in first-mapped order.
+
+        Device nodes (`/dev/nvidia*` once CUDA is initialised) are left out.
+        """
         try:
             lines = maps.read_text().splitlines()
         except OSError:
@@ -108,7 +111,9 @@ class TunedBuildCheck:
             fields = line.split(maxsplit=5)
             if len(fields) == 6 and fields[5].startswith("/"):
                 seen.setdefault(fields[5], None)
-        return [Path(p) for p in seen if not p.endswith(" (deleted)")]
+        return [
+            Path(p) for p in seen if not p.endswith(" (deleted)") and Path(p).is_file()
+        ]
 
     @staticmethod
     def _package_extensions(package: str) -> list[Path]:

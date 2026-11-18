@@ -124,17 +124,35 @@ def test_check_field_missing_from_a_stamp_is_not_compared(
     TunedBuildCheck.check(ref, [libs.make("torch.so", "gb10", tag=None)])
 
 
-def test_mapped_files_keeps_file_paths_once(tmp_path: Path) -> None:
+def test_mapped_files_keeps_regular_files_once(tmp_path: Path) -> None:
+    lib = tmp_path / "libtorch_cuda.so"
+    spaced = tmp_path / "my dir" / "lib.so"
+    spaced.parent.mkdir()
+    lib.write_bytes(b"")
+    spaced.write_bytes(b"")
     maps = tmp_path / "maps"
     maps.write_text(
-        "aaaa-bbbb r-xp 00000000 08:01 1 /opt/lib/libtorch_cuda.so\n"
-        "bbbb-cccc r--p 00010000 08:01 1 /opt/lib/libtorch_cuda.so\n"
+        f"aaaa-bbbb r-xp 00000000 08:01 1 {lib}\n"
+        f"bbbb-cccc r--p 00010000 08:01 1 {lib}\n"
         "cccc-dddd rw-p 00000000 00:00 0 \n"
         "dddd-eeee rw-p 00000000 00:00 0 [heap]\n"
-        "eeee-ffff r-xp 00000000 08:01 2 /opt/lib/old.so (deleted)\n"
-        "ffff-0000 r-xp 00000000 08:01 3 /opt/my dir/lib.so\n"
+        f"eeee-ffff r-xp 00000000 08:01 2 {tmp_path}/old.so (deleted)\n"
+        "eeef-ffff rw-s 00000000 00:05 4 /dev/null\n"
+        f"ffff-0000 r-xp 00000000 08:01 3 {spaced}\n"
     )
-    assert TunedBuildCheck._mapped_files(maps) == [
-        Path("/opt/lib/libtorch_cuda.so"),
-        Path("/opt/my dir/lib.so"),
-    ]
+    assert TunedBuildCheck._mapped_files(maps) == [lib, spaced]
+
+
+def test_late_loaded_package_extension_is_checked(
+    libs: stamped_library, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / "site" / "fake_tuned_pkg"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    other = libs.make("ext.so", "rtx40")
+    shutil.move(other, package / "_ext_C.abi3.so")
+    monkeypatch.syspath_prepend(str(tmp_path / "site"))
+    found = TunedBuildCheck._package_extensions("fake_tuned_pkg")
+    assert found == [package / "_ext_C.abi3.so"]
+    with pytest.raises(ImportError, match="variant=rtx40"):
+        TunedBuildCheck.check(libs.make("vllm.so", "gb10"), found)
