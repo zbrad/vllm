@@ -11,10 +11,11 @@ Single-arch vllm wheel for NVIDIA GB10 (DGX Spark, Blackwell, SM 12.1 accelerate
 
 ## What's new since 0.34.1.dev200
 
-- **DeepSeek-V4's code path runs on GB10** (tested with a tiny stand-in, not the real checkpoint). The FA4 CuteDSL kernels shipped in this wheel failed at import
+- **DeepSeek-V4's code path runs on GB10** (tested with a tiny stand-in, not the real checkpoint). In earlier builds, including
+  0.34.1.dev200, the FA4 CuteDSL kernels bundled in the wheel failed at import
   (`No module named 'flash_attn_2_cuda'`), because the prebuilt flash-attn path packaged them with
-  unrewritten `flash_attn.cute` imports. They are now copied with their imports rewritten, as upstream's
-  source build does. DeepSeek-V4's fused indexer is one user of them; with the DeepGEMM pin's SM12 scale-factor
+  unrewritten `flash_attn.cute` imports. This build copies them with their imports rewritten, as upstream's
+  source build does, and they import. DeepSeek-V4's fused indexer is one user of them; with the DeepGEMM pin's SM12 scale-factor
   support (the gap in deepseek-ai/DeepGEMM#372), the DeepSeek-V4 stand-in (`yujiepan/deepseek-v4-tiny-random`)
   now loads and generates and is part of the acceptance test instead of a documented skip.
 - **Direct I/O loader fixes from review** (zbrad/vllm#7): zero-size tensors stay on the GPU on the
