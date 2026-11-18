@@ -1,0 +1,56 @@
+# RTX 40 (Ada Lovelace, sm_89) native Windows (MSVC) dev build, zbrad tuned-win. Experimental, not published.
+# The same shape as requirements/rtx50win.txt: setup.py reads this file as requirements/<GPU_TUNED_VARIANT>.txt
+# (GPU_TUNED_VARIANT=rtx40win; the version label allows no hyphen) when VLLM_GB10_BUILD is set. vllm_flash_attn is a
+# local Windows build, installed into the build venv first (2.7.2.post1+rtx40.cu134.win...); flash-attention is not
+# listed, as in rtx40.txt (VLLM_FLASH_ATTN_PREBUILT_PKG). Differences from rtx50win.txt: torch and flashinfer are the
+# published rtx40-win pre-releases, pinned by URL, and apache-tvm-ffi is tuned-common's constraints/rtx40-win.txt pin.
+
+# Common dependencies
+-r common.txt
+
+# common.txt gates these on platform_machine == "x86_64", which is "AMD64" on Windows, so they would be dropped.
+xgrammar == 0.2.8; sys_platform == "win32"
+llguidance >= 1.7.0, < 1.8.0; sys_platform == "win32"
+
+numba == 0.65.0 # Required for N-gram speculative decoding
+
+# zbrad/pytorch pre-release 2.15.0+rtx40.win.cu134.20261115.1 (sm_89, path-trimmed).
+torch @ https://github.com/zbrad/pytorch/releases/download/v2.15.0%2Brtx40.win.cu134.20261115.1/torch-2.15.0%2Brtx40.win.cu134.20261115.1-cp314-cp314-win_amd64.whl ; sys_platform == "win32"
+# Triton for Windows (triton-lang/triton-windows), the version torch 2.15's checkout pins (3.9.0).
+triton-windows == 3.9.0.post30; sys_platform == "win32"
+
+# zbrad/flashinfer pre-release 0.7.4+rtx40.win.cu134.20261115.0: the Python package, the jit-cache shim and the sm89
+# precompiled kernels (FA2 prefill/decode, sampling, page; no XQA on SM 89). Run with FLASHINFER_DISABLE_JIT=1: no
+# kernel outside that set is compiled at run time.
+flashinfer-python @ https://github.com/zbrad/flashinfer/releases/download/v0.7.4%2Brtx40.win.cu134.20261115.0/flashinfer_python-0.7.4%2Brtx40.win.cu134.20261115.0-py3-none-any.whl ; sys_platform == "win32"
+flashinfer-jit-cache @ https://github.com/zbrad/flashinfer/releases/download/v0.7.4%2Brtx40.win.cu134.20261115.0/flashinfer_jit_cache-0.7.4%2Brtx40.win.cu134.20261115.0-py3-none-any.whl ; sys_platform == "win32"
+flashinfer-jit-cache-sm89 @ https://github.com/zbrad/flashinfer/releases/download/v0.7.4%2Brtx40.win.cu134.20261115.0/flashinfer_jit_cache_sm89-0.7.4%2Brtx40.win.cu134.20261115.0-cp39-abi3-win_amd64.whl ; sys_platform == "win32"
+
+# tuned-common constraints/rtx40-win.txt: flashinfer's kernel DLLs link tvm_ffi.dll 0.1.16, so vLLM installs the same.
+# xgrammar 0.2.8's Windows wheel needs 0.1.13 or later (WinError 127 on 0.1.11/0.1.12). Every tilelang release caps
+# apache-tvm-ffi < 0.1.13, so tilelang (the mhc kernels only) is left out on Windows.
+apache-tvm-ffi==0.1.16
+
+# pyzmq with libzmq's ipc:// (AF_UNIX) transport on Windows: the zbrad/pyzmq +ipc build. PyPI's Windows wheels are
+# built without it (pyzmq#1981), and vLLM then falls back to loopback TCP for the engine sockets (zmq.has("ipc")).
+pyzmq @ https://github.com/zbrad/pyzmq/releases/download/v27.3.0%2Bipc.20261110.0/pyzmq-27.3.0%2Bipc.20261110.0-cp312-abi3-win_amd64.whl ; sys_platform == "win32"
+# >=1.31.0 keeps execution plans alive for the CUDA graphs recorded from them
+# (NVIDIA/cudnn-frontend#1195); older versions can replay an unloaded kernel.
+nvidia-cudnn-frontend>=1.31.0
+# Required for LLM_NVTX_SCOPES_FOR_PROFILING=1
+nvtx==0.2.15
+# Required for faster safetensors model loading
+fastsafetensors >= 0.3.3
+
+# QuACK and Cutlass DSL for FA4 (cute-DSL implementation)
+nvidia-cutlass-dsl[cu13]==4.8.0
+quack-kernels==0.6.5  # Required by MSA
+
+# Humming kernels for quantization gemm
+humming-kernels[cu13]==0.1.19
+# Pin the pip CUDA components to the toolkit this build uses (cu134), as rtx40.txt does.
+nvidia-cuda-runtime==13.4.92
+nvidia-cuda-nvcc==13.4.92
+nvidia-cuda-nvrtc==13.4.92
+nvidia-nvvm==13.4.92
+nvidia-cuda-crt==13.4.92
