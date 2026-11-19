@@ -1073,7 +1073,9 @@ def test_skinny_gemm_plans_are_valid(
         pytest.param(torch.float16, False, 1024, 2, False, False, id="fp16"),
         pytest.param(torch.float32, False, 1024, 2, False, False, id="fp32"),
         pytest.param(torch.bfloat16, True, 1024, 2, False, False, id="bias"),
-        pytest.param(torch.bfloat16, False, 128, 2, False, False, id="unlisted"),
+        # tuned-builds: unplanned shapes are marked too; the op picks a config
+        # or F.linear per call (vllm/ext/.../skinny_gemm_rule_ext.py).
+        pytest.param(torch.bfloat16, False, 128, 2, False, True, id="unlisted"),
         pytest.param(torch.bfloat16, False, 1024, 2, True, False, id="batch-invariant"),
         pytest.param(torch.bfloat16, False, 1024, 3, False, False, id="conv1d"),
         pytest.param(torch.bfloat16, False, 1024, 4, False, False, id="conv2d"),

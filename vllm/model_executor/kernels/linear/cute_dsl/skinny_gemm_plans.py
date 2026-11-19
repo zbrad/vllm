@@ -75,4 +75,12 @@ def get_skinny_gemm_plan(n: int, k: int) -> SkinnyGemmPlan | None:
     )
     if plans is None or not shape_dynamic_skinny_gemm.is_available():
         return None
-    return plans.get((n, k))
+    plan = plans.get((n, k))
+    if plan is None:
+        # tuned-builds: a default config for shapes without a measured plan.
+        from vllm.ext.model_executor.kernels.linear.skinny_gemm_rule_ext import (
+            SkinnyGemmRuleExt,
+        )
+
+        plan = SkinnyGemmRuleExt.plan(n, k)
+    return plan

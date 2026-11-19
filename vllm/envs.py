@@ -320,6 +320,7 @@ if TYPE_CHECKING:
     VLLM_DISABLE_SHARED_EXPERTS_STREAM: bool = False
     VLLM_DISABLE_DSV4_MEGAMOE_SHARED_EXPERT_FUSION: bool = False
     VLLM_SKINNY_GEMM_MAX_WEIGHT_BYTES: int = 0
+    VLLM_SKINNY_GEMM_DEFAULT_RULE: bool = True
     VLLM_SHARED_EXPERTS_STREAM_TOKEN_THRESHOLD: int = 256
     VLLM_MULTI_STREAM_GEMM_TOKEN_THRESHOLD: int = 1024
     VLLM_COHERE2_ATTN_MOE_DUAL_STREAM_TOKEN_THRESHOLD: int = 256
@@ -2245,6 +2246,13 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "VLLM_SKINNY_GEMM_MAX_WEIGHT_BYTES": lambda: int(
         os.getenv("VLLM_SKINNY_GEMM_MAX_WEIGHT_BYTES", "0")
     ),
+    # tuned-builds: on GB10 (sm121), run bf16 linears whose shape has no
+    # measured skinny GEMM plan through a default skinny config at 1, 2 and 4
+    # tokens (vllm/ext/model_executor/kernels/linear/skinny_gemm_rule_ext.py).
+    # 0 restores upstream's behavior (F.linear for unplanned shapes).
+    "VLLM_SKINNY_GEMM_DEFAULT_RULE": lambda: bool(
+        int(os.getenv("VLLM_SKINNY_GEMM_DEFAULT_RULE", "1"))
+    ),
     # Limits when we run shared_experts in a separate stream.
     # We found out that for large batch sizes, the separate stream
     # execution is not beneficial (most likely because of the input clone)
@@ -2538,6 +2546,9 @@ def compile_factors() -> dict[str, object]:
         "VLLM_LOG_STATS_INTERVAL",
         "VLLM_DEBUG_LOG_API_SERVER_RESPONSE",
         "VLLM_TUNED_CONFIG_FOLDER",
+        # tuned-builds: read inside the skinny GEMM custom op at run time; the
+        # compiled graph is the same either way.
+        "VLLM_SKINNY_GEMM_DEFAULT_RULE",
         "VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR",
         "VLLM_FLASHINFER_AUTOTUNE_SKIP_OPS",
         "VLLM_HTTP_TIMEOUT_KEEP_ALIVE",

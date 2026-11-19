@@ -601,9 +601,11 @@ direct_register_custom_op(
 
 
 def maybe_use_skinny_gemm(layer: torch.nn.Module) -> None:
-    """Mark ``layer`` for the skinny GEMM if its weight shape has a plan."""
-    from vllm.model_executor.kernels.linear.cute_dsl.skinny_gemm_plans import (
-        get_skinny_gemm_plan,
+    """Mark an eligible ``layer`` for the skinny GEMM op on a supported device."""
+    # tuned-builds: mark every eligible layer on a device with a plan table and
+    # let the op choose per call, so plans stay out of compiled graphs.
+    from vllm.ext.model_executor.kernels.linear.skinny_gemm_rule_ext import (
+        SkinnyGemmRuleExt,
     )
 
     weight = layer.weight
@@ -614,7 +616,7 @@ def maybe_use_skinny_gemm(layer: torch.nn.Module) -> None:
         not envs.VLLM_BATCH_INVARIANT
         and weight.dtype == torch.bfloat16
         and getattr(layer, "bias", None) is None
-        and get_skinny_gemm_plan(*weight.shape) is not None
+        and SkinnyGemmRuleExt.device_supported()
     ):
         layer.use_skinny_gemm = True
 
