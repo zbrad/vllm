@@ -20,9 +20,10 @@ class TunedFlags:
     # PTX, so it can never need the driver to JIT-compile PTX at run time.
     FLASH_ATTN_FA2_NATIVE_ONLY: bool = False
 
-    # Default for FLASHINFER_DISABLE_JIT: an op outside the shipped AOT cache is a
-    # hard error, not a silent JIT build. Applied with setdefault in
-    # vllm/env_override.py, so an explicit (even empty) value still wins.
+    # Default for FLASHINFER_DISABLE_JIT and FLASHINFER_NO_DOWNLOAD: an op outside the
+    # shipped AOT cache, or a kernel artifact not installed, is a hard error, not a
+    # silent JIT build or download. Applied with setdefault in vllm/env_override.py,
+    # so an explicit (even empty) value still wins.
     FLASHINFER_DISABLE_JIT: bool = False
 
     # Default NCCL_MAX_NCHANNELS=2 when the whole job is one process (world size

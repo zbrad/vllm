@@ -948,3 +948,6 @@ from vllm.ext.tuned_flags import TunedFlags as _TunedFlags
 
 if _TunedFlags.FLASHINFER_DISABLE_JIT:
     os.environ.setdefault("FLASHINFER_DISABLE_JIT", "1")
+    # No run-time downloads either: a kernel artifact missing from the install fails
+    # by name (flashinfer/jit/cubin_loader.py) instead of being fetched from NVIDIA.
+    os.environ.setdefault("FLASHINFER_NO_DOWNLOAD", "1")
