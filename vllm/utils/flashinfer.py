@@ -100,9 +100,10 @@ def has_flashinfer() -> bool:
     if importlib.util.find_spec("flashinfer") is None:
         logger.debug_once("FlashInfer unavailable since package was not found")
         return False
-    # FlashInfer's JIT runs nvcc and `ninja` (from PATH). With FLASHINFER_DISABLE_JIT set it never
-    # compiles: kernels come from the precompiled flashinfer-jit-cache wheels, and a module missing
-    # there fails by name, so a deployment without a CUDA toolkit still has FlashInfer.
+    # FlashInfer's JIT runs nvcc and `ninja` (from PATH). With
+    # FLASHINFER_DISABLE_JIT set it never compiles: kernels come from the
+    # precompiled flashinfer-jit-cache wheels, and a module missing there fails
+    # by name, so a deployment without a CUDA toolkit still has FlashInfer.
     if (
         not has_flashinfer_cubin()
         and not os.environ.get("FLASHINFER_DISABLE_JIT")
@@ -142,27 +143,61 @@ def warn_if_flashinfer_kernels_missing() -> None:
     ):
         return
     flashinfer_version = _installed_version("flashinfer-python")
+    # With FLASHINFER_DISABLE_JIT set FlashInfer never compiles: its kernels come
+    # from flashinfer-jit-cache, and one missing there fails by name. A missing
+    # flashinfer-cubin then only means artifacts are downloaded on first use, and
+    # with FLASHINFER_NO_DOWNLOAD set an artifact not installed fails by name too.
+    jit_disabled = bool(os.environ.get("FLASHINFER_DISABLE_JIT"))
+    no_download = bool(os.environ.get("FLASHINFER_NO_DOWNLOAD"))
+    if (
+        jit_disabled
+        and not no_download
+        and not envs.VLLM_HAS_FLASHINFER_CUBIN
+        and flashinfer_version is not None
+        and _installed_version("flashinfer-cubin") != flashinfer_version
+    ):
+        logger.info_once(
+            "No flashinfer-cubin matching flashinfer-python %s is installed: "
+            "FlashInfer downloads the prebuilt kernel artifacts it would hold from "
+            "NVIDIA on first use. Set FLASHINFER_NO_DOWNLOAD=1 to refuse downloads.",
+            flashinfer_version,
+        )
     packages = []
-    if not envs.VLLM_HAS_FLASHINFER_CUBIN:
+    if not envs.VLLM_HAS_FLASHINFER_CUBIN and not jit_disabled:
         packages.append("flashinfer-cubin")
     if has_flashinfer_jit_cache_wheels():
         packages.append("flashinfer-jit-cache")
     installed = {name: _installed_version(name) for name in packages}
-    if flashinfer_version is None or all(
-        version == flashinfer_version for version in installed.values()
-    ):
+    matches = all(version == flashinfer_version for version in installed.values())
+    if flashinfer_version is not None and matches and jit_disabled and no_download:
+        logger.info_once(
+            "FlashInfer %s runs pre-built kernels only (%s): FLASHINFER_DISABLE_JIT "
+            "and FLASHINFER_NO_DOWNLOAD are set, so FlashInfer compiles no kernels "
+            "and refuses kernel artifact downloads at run time; a kernel that is "
+            "not installed fails by name.",
+            flashinfer_version,
+            ", ".join(f"{name} {version}" for name, version in installed.items())
+            or "no kernel packages checked",
+        )
+    if flashinfer_version is None or matches:
         return
+    consequence = (
+        "FLASHINFER_DISABLE_JIT is set, so FlashInfer does not compile them: a "
+        "kernel missing from flashinfer-jit-cache fails with MissingJITCacheError."
+        if jit_disabled
+        else "FlashInfer then downloads and compiles kernels at startup, which can "
+        "take several minutes, or fails to import mismatched ones."
+    )
     logger.warning_once(
         "FlashInfer's precompiled kernels are missing or do not match "
-        "flashinfer-python %s (%s). FlashInfer then downloads and compiles "
-        "kernels at startup, which can take several minutes, or fails to import "
-        "mismatched ones. Run `vllm download-kernels` in this Python environment "
-        "to install them.",
+        "flashinfer-python %s (%s). %s Run `vllm download-kernels` in this Python "
+        "environment to install them.",
         flashinfer_version,
         ", ".join(
             f"{name} {version or 'not installed'}"
             for name, version in installed.items()
         ),
+        consequence,
     )
 
 
