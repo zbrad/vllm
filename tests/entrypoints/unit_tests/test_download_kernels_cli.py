@@ -53,6 +53,7 @@ def test_download_kernels_resolves_kernel_warning(
         return "Run `vllm download-kernels`" in caplog_vllm.text
 
     monkeypatch.delenv("VLLM_HAS_FLASHINFER_CUBIN", raising=False)
+    monkeypatch.delenv("FLASHINFER_DISABLE_JIT", raising=False)
     monkeypatch.setattr(importlib.metadata, "version", version)
     monkeypatch.setattr(fi, "has_flashinfer", lambda: True)
     monkeypatch.setattr(
@@ -88,6 +89,7 @@ def test_cuda_without_jit_cache_wheels_needs_only_cubin(
         return SimpleNamespace(returncode=0)
 
     monkeypatch.delenv("VLLM_HAS_FLASHINFER_CUBIN", raising=False)
+    monkeypatch.delenv("FLASHINFER_DISABLE_JIT", raising=False)
     monkeypatch.setattr(fi.torch.version, "cuda", "12.8")
     monkeypatch.setattr(download_kernels, "find_spec", lambda name: object())
     monkeypatch.setattr(subprocess, "run", run)
@@ -103,6 +105,54 @@ def test_cuda_without_jit_cache_wheels_needs_only_cubin(
     assert commands[0][-1] == "install-cubin-wheel"
     fi.warn_if_flashinfer_kernels_missing()
     assert "vllm download-kernels" not in caplog_vllm.text
+
+
+def test_jit_disabled_needs_only_jit_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog_vllm: pytest.LogCaptureFixture,
+    disable_log_dedup,
+):
+    """With FLASHINFER_DISABLE_JIT set FlashInfer never compiles, so a missing
+    flashinfer-cubin is no reason to warn about compiling at startup; it only
+    means artifacts are downloaded, which is logged at info level. With
+    FLASHINFER_NO_DOWNLOAD set too, one info line says only pre-built kernels
+    run. A stale flashinfer-jit-cache still warns, naming the failure it causes."""
+    installed = {"flashinfer-python": "1.0", "flashinfer-jit-cache": "1.0"}
+
+    def version(name: str) -> str:
+        if name not in installed:
+            raise importlib.metadata.PackageNotFoundError(name)
+        return installed[name]
+
+    monkeypatch.delenv("VLLM_HAS_FLASHINFER_CUBIN", raising=False)
+    monkeypatch.setenv("FLASHINFER_DISABLE_JIT", "1")
+    monkeypatch.delenv("FLASHINFER_NO_DOWNLOAD", raising=False)
+    monkeypatch.setattr(fi.torch.version, "cuda", "13.4")
+    monkeypatch.setattr(importlib.metadata, "version", version)
+    monkeypatch.setattr(fi, "has_flashinfer", lambda: True)
+    monkeypatch.setattr(
+        fi,
+        "current_platform",
+        SimpleNamespace(is_cuda=lambda: True, has_device_capability=lambda _: True),
+    )
+
+    fi.warn_if_flashinfer_kernels_missing()
+    assert "vllm download-kernels" not in caplog_vllm.text
+    assert "FLASHINFER_NO_DOWNLOAD=1" in caplog_vllm.text
+
+    caplog_vllm.clear()
+    monkeypatch.setenv("FLASHINFER_NO_DOWNLOAD", "1")
+    fi.warn_if_flashinfer_kernels_missing()
+    assert "runs pre-built kernels only (flashinfer-jit-cache 1.0)" in caplog_vllm.text
+    assert "No flashinfer-cubin" not in caplog_vllm.text
+
+    caplog_vllm.clear()
+    installed["flashinfer-jit-cache"] = "0.9"
+    fi.warn_if_flashinfer_kernels_missing()
+    assert "runs pre-built kernels only" not in caplog_vllm.text
+    assert "flashinfer-jit-cache 0.9" in caplog_vllm.text
+    assert "MissingJITCacheError" in caplog_vllm.text
+    assert "flashinfer-cubin not installed" not in caplog_vllm.text
 
 
 def test_download_kernels_skips_without_flashinfer(monkeypatch: pytest.MonkeyPatch):
