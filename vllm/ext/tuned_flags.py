@@ -33,3 +33,10 @@ class TunedFlags:
     # to 0.24 GiB. Applied with setdefault in vllm/v1/worker/gpu_worker.py, so an
     # explicit value still wins, and never for more than one rank.
     NCCL_SINGLE_RANK_FEW_CHANNELS: bool = False
+
+    # Default torch.compile off: an unset compilation mode resolves to NONE instead of
+    # VLLM_COMPILE (vllm/config/vllm.py), so CUDA graphs stay but nothing is compiled
+    # per model. Measured on gb10 (2026-11-21): within ~1% on dense models and an MoE,
+    # ~3% slower on a hybrid Mamba MoE, 14-17 s faster cold start, no per-model
+    # torch.compile cache to build or ship. An explicit mode (-cc.mode=3) still wins.
+    TORCH_COMPILE_OFF_BY_DEFAULT: bool = False

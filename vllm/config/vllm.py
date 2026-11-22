@@ -1756,7 +1756,16 @@ class VllmConfig:
         current_platform.apply_config_platform_defaults(self)
 
         if self.compilation_config.mode is None:
-            if self.optimization_level > OptimizationLevel.O0:
+            from vllm.ext.tuned_flags import TunedFlags
+
+            if TunedFlags.TORCH_COMPILE_OFF_BY_DEFAULT:
+                logger.info_once(
+                    "Tuned build: torch.compile is off by default "
+                    "(TunedFlags.TORCH_COMPILE_OFF_BY_DEFAULT); CUDA graphs are "
+                    "kept. Pass -cc.mode=3 to compile."
+                )
+                self.compilation_config.mode = CompilationMode.NONE
+            elif self.optimization_level > OptimizationLevel.O0:
                 self.compilation_config.mode = CompilationMode.VLLM_COMPILE
             else:
                 self.compilation_config.mode = CompilationMode.NONE

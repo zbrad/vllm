@@ -14,7 +14,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STUB = REPO_ROOT / "vllm" / "ext" / "tuned_flags.py"
 PACKAGE_SH = REPO_ROOT / "tuned" / "package.sh"
-FLAG_NAMES = ("FLASH_ATTN_FA2_NATIVE_ONLY", "FLASHINFER_DISABLE_JIT", "NCCL_SINGLE_RANK_FEW_CHANNELS")
+FLAG_NAMES = (
+    "FLASH_ATTN_FA2_NATIVE_ONLY",
+    "FLASHINFER_DISABLE_JIT",
+    "NCCL_SINGLE_RANK_FEW_CHANNELS",
+    "TORCH_COMPILE_OFF_BY_DEFAULT",
+)
 
 
 def test_stub_defaults_assert_nothing() -> None:
